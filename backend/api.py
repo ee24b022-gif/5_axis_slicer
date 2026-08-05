@@ -1,9 +1,12 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import math
 import trimesh
 import io
+import os
 
 from toolpath import generate_zig_zag_toolpath_on_mesh
 from kinematics import Kinematics5Axis
@@ -44,6 +47,6 @@ async def slice_stl(file: UploadFile = File(...), line_width: float = Form(0.4),
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/")
-def read_root():
-    return {"message": "Open5x Slicer API is running!"}
+# Serve static files from the built frontend
+frontend_dist = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
+app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")

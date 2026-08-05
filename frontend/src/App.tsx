@@ -104,7 +104,7 @@ function App() {
       formData.append("line_width", lineWidth.toString());
       formData.append("bed_center_z", bedCenterZ.toString());
       
-      const response = await axios.post('http://localhost:8001/slice_stl', formData, {
+      const response = await axios.post('/slice_stl', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       
