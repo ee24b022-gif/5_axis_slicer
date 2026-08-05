@@ -21,28 +21,26 @@ function Toolpath({ points }: { points: {x: number, y: number, z: number}[] }) {
 
 function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
   return (
-    <div className="layout">
-      {/* NAVBAR */}
-      <nav className="navbar">
-        <div className="nav-brand text-muted">
+    <div className="welcome-layout">
+      <nav className="welcome-navbar">
+        <div className="text-muted" style={{ fontWeight: 700 }}>
           &gt;_ OPEN5X_SLICER.EXE
         </div>
       </nav>
 
-      {/* HERO SECTION */}
-      <main className="hero" style={{ alignItems: 'center', textAlign: 'center' }}>
+      <main className="welcome-hero">
         <div className="accent-text">
           &gt; SYSTEM READY...
         </div>
         
-        <h1 style={{ fontSize: '5rem', marginBottom: '40px' }}>WELCOME TO<br/>5 AXIS SLICER</h1>
+        <h1 className="welcome-title">WELCOME TO<br/>5 AXIS SLICER</h1>
         
-        <div className="btn-group" style={{ justifyContent: 'center' }}>
-          <button className="btn-primary" onClick={onEnter}>
+        <div className="welcome-btn-group">
+          <button className="btn-primary" onClick={onEnter} style={{ width: 'auto' }}>
             Enter Slicer Page
           </button>
           
-          <button className="btn-secondary" onClick={() => alert("Destination TBD")}>
+          <button className="btn-secondary" onClick={() => alert("Destination TBD")} style={{ width: 'auto' }}>
             [ Coming Soon ]
           </button>
         </div>
@@ -95,7 +93,7 @@ function App() {
       const points = response.data.toolpath_points;
       
       setToolpathPoints(points);
-      setStatus(`SUCCESS: GENERATED ${points.length} POINTS`);
+      setStatus(`SUCCESS: GENERATED ${points.length} Pts`);
       
       const blob = new Blob([gcode], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
@@ -120,100 +118,93 @@ function App() {
   }
 
   return (
-    <div className="layout">
-      {/* NAVBAR */}
-      <nav className="navbar">
-        <div className="nav-brand text-muted">
+    <div className="app-container">
+      {/* TOP BAR */}
+      <header className="topbar">
+        <div className="text-muted" style={{ fontWeight: 700 }}>
           &gt;_ OPEN5X_SLICER.EXE
         </div>
-        <button className="btn-secondary" onClick={() => window.location.reload()} style={{ padding: '8px 16px', fontSize: '14px' }}>
-          [ RESTART_KERNEL ]
+        <button className="btn-secondary" onClick={() => setHasEntered(false)} style={{ padding: '8px 16px', fontSize: '14px', width: 'auto' }}>
+          [ EXIT_SLICER ]
         </button>
-      </nav>
+      </header>
 
-      {/* HERO SECTION */}
-      <main className="hero">
-        <div className="accent-text">
-          &gt; INITIALIZING GEOMETRY PROTOCOLS...
-        </div>
-        
-        <h1>GENERATE 5-AXIS<br/>CONFORMAL TOOLPATHS</h1>
-        
-        <div className="controls-container">
-          <p style={{ marginTop: 0, marginBottom: '20px' }}>
-            Open5x Slicer brings your team together with powerful tools designed to seamlessly convert 3D meshes into 5-axis G-code for complex architectures.
-          </p>
-          
-          <div className="input-row">
-            <label>LINE WIDTH</label>
-            <input 
-              type="number" 
-              className="terminal-input"
-              step="0.05" 
-              value={lineWidth} 
-              onChange={e => setLineWidth(parseFloat(e.target.value))} 
-            />
+      <div className="main-content">
+        {/* SIDEBAR */}
+        <aside className="sidebar">
+          <div className="accent-text" style={{ marginBottom: '10px' }}>
+            &gt; CONFIGURE SLICER
           </div>
           
-          <div className="input-row">
-            <label>BED CENTER Z</label>
-            <input 
-              type="number" 
-              className="terminal-input"
-              step="1" 
-              value={bedCenterZ} 
-              onChange={e => setBedCenterZ(parseFloat(e.target.value))} 
-            />
+          <div className="controls-container">
+            <div className="input-row">
+              <label>LINE WIDTH (mm)</label>
+              <input 
+                type="number" 
+                className="terminal-input"
+                step="0.05" 
+                value={lineWidth} 
+                onChange={e => setLineWidth(parseFloat(e.target.value))} 
+              />
+            </div>
+            
+            <div className="input-row">
+              <label>BED CENTER Z (mm)</label>
+              <input 
+                type="number" 
+                className="terminal-input"
+                step="1" 
+                value={bedCenterZ} 
+                onChange={e => setBedCenterZ(parseFloat(e.target.value))} 
+              />
+            </div>
           </div>
-        </div>
-        
-        <div className="btn-group">
-          <button className="btn-primary" onClick={handleSlice} disabled={isSlicing || !file}>
-            {isSlicing ? 'Executing...' : 'Initiate Slicing'}
-          </button>
           
-          <label style={{ display: 'inline-block' }}>
-            <span className="btn-secondary">
-              [ {file ? file.name.substring(0, 15) + (file.name.length > 15 ? '...' : '') : "Upload STL"} ]
-            </span>
-            <input 
-              type="file" 
-              accept=".stl" 
-              onChange={handleFileChange} 
-              ref={fileInputRef}
-              style={{ display: 'none' }}
-            />
-          </label>
-        </div>
-        
-        <div className="status-text">
-          STATUS: {status} <span className="cursor-blink"></span>
-        </div>
-      </main>
+          <div className="btn-group">
+            <label style={{ display: 'block', width: '100%' }}>
+              <div className="btn-secondary" style={{ width: '100%' }}>
+                [ {file ? file.name.substring(0, 20) + (file.name.length > 20 ? '...' : '') : "Upload STL"} ]
+              </div>
+              <input 
+                type="file" 
+                accept=".stl" 
+                onChange={handleFileChange} 
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+              />
+            </label>
+            
+            <button className="btn-primary" onClick={handleSlice} disabled={isSlicing || !file}>
+              {isSlicing ? 'Executing...' : 'Initiate Slicing'}
+            </button>
+          </div>
+          
+          <div style={{ marginTop: '30px', borderTop: '1px solid rgba(31,107,31,0.4)', paddingTop: '20px' }}>
+            <div className="stat-box">
+              <div className="text-muted" style={{ fontSize: '12px' }}>GEOMETRY ENGINE</div>
+              <div style={{ fontSize: '18px', fontWeight: 'bold' }}>{toolpathPoints.length > 0 ? 'ONLINE' : 'STANDBY'}</div>
+            </div>
+            <div className="stat-box">
+              <div className="text-muted" style={{ fontSize: '12px' }}>TOOLPATH POINTS</div>
+              <div style={{ fontSize: '18px', fontWeight: 'bold' }}>{toolpathPoints.length}</div>
+            </div>
+          </div>
 
-      {/* 3D VIEWER (BOTTOM GRID) */}
-      <section className="viewer-section">
-        <div>
-          <div className="text-muted" style={{ fontSize: '12px' }}>GEOMETRY ENGINE</div>
-          <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{toolpathPoints.length > 0 ? 'ONLINE' : 'STANDBY'}</div>
-        </div>
-        <div>
-          <div className="text-muted" style={{ fontSize: '12px' }}>TOOLPATH POINTS</div>
-          <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{toolpathPoints.length}</div>
-        </div>
-        <div>
-          <div className="text-muted" style={{ fontSize: '12px' }}>OUTPUT FORMAT</div>
-          <div style={{ fontSize: '24px', fontWeight: 'bold' }}>G-CODE</div>
-        </div>
-        
-        <div className="viewer-wrapper">
+          <div className="status-text">
+            STATUS: {status} <span className="cursor-blink"></span>
+          </div>
+        </aside>
+
+        {/* MAIN CANVAS */}
+        <main className="canvas-area">
           <Canvas camera={{ position: [40, 40, 40], up: [0, 0, 1] }}>
-            <Grid infiniteGrid fadeDistance={100} sectionColor="#1f6b1f" cellColor="#090a09" />
+            {/* Darker grid to fade into background */}
+            <Grid infiniteGrid fadeDistance={100} sectionColor="#1f6b1f" cellColor="transparent" />
             <Toolpath points={toolpathPoints} />
             <OrbitControls makeDefault />
           </Canvas>
-        </div>
-      </section>
+        </main>
+      </div>
     </div>
   );
 }

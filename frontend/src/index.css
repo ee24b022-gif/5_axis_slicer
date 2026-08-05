@@ -1,9 +1,11 @@
 :root {
   /* Terminal Design Tokens matching the screenshot */
   --bg: #090a09;
+  --bg-center: #1a1f1a; /* slightly lighter in the center for radial gradient */
   --fg-primary: #39ff14; /* vibrant neon green */
   --fg-muted: #1f6b1f; /* dimmed green */
   --font-mono: 'JetBrains Mono', monospace;
+  --font-retro: 'VT323', monospace;
   
   --text-glow: 0 0 8px rgba(57, 255, 20, 0.4);
 }
@@ -15,15 +17,15 @@
 body {
   margin: 0;
   font-family: var(--font-mono);
-  background-color: var(--bg);
+  background: radial-gradient(circle at center, var(--bg-center) 0%, var(--bg) 100%);
+  background-attachment: fixed;
   color: var(--fg-primary);
-  /* The screenshot does not have excessive text shadow on all text, only accents if any */
   overflow-x: hidden;
   font-size: 16px;
   line-height: 1.6;
 }
 
-/* Thicker CRT Scanline Overlay */
+/* Enhanced CRT Scanline Overlay with faint green tint */
 body::after {
   content: " ";
   display: block;
@@ -34,8 +36,8 @@ body::after {
   right: 0;
   background: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 0) 50%,
-    rgba(0, 0, 0, 0.35) 50%
+    rgba(57, 255, 20, 0.02) 50%,
+    rgba(0, 0, 0, 0.4) 50%
   );
   background-size: 100% 6px;
   z-index: 50;
@@ -53,6 +55,16 @@ h1 {
   text-shadow: var(--text-glow);
 }
 
+.welcome-title {
+  font-family: var(--font-retro);
+  font-size: 7rem;
+  font-weight: normal;
+  line-height: 1;
+  letter-spacing: 0px;
+  margin-bottom: 20px;
+  text-shadow: 0 0 15px rgba(57, 255, 20, 0.6);
+}
+
 .text-muted {
   color: var(--fg-muted);
 }
@@ -64,56 +76,65 @@ h1 {
   margin-bottom: 20px;
 }
 
-/* Layout */
-.layout {
+/* Application Layout */
+.app-container {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  padding: 0 5%;
-  max-width: 1200px;
-  margin: 0 auto;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
 }
 
-/* Header Navbar */
-.navbar {
+.topbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 30px 0;
-  border-bottom: 1px solid rgba(31, 107, 31, 0.3);
-  margin-bottom: 60px;
+  padding: 15px 30px;
+  border-bottom: 1px solid rgba(31, 107, 31, 0.4);
+  background-color: rgba(9, 10, 9, 0.8);
+  z-index: 10;
 }
 
-.nav-brand {
-  font-weight: 700;
-}
-
-/* Hero Section */
-.hero {
+.main-content {
+  display: flex;
   flex-grow: 1;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 350px;
+  min-width: 350px;
+  border-right: 1px solid rgba(31, 107, 31, 0.4);
+  background-color: rgba(9, 10, 9, 0.6);
+  padding: 30px 20px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  padding-bottom: 60px;
+  overflow-y: auto;
+  z-index: 10;
 }
 
-/* Controls / Body section (the left border part) */
+.canvas-area {
+  flex-grow: 1;
+  position: relative;
+}
+
+/* Controls inside Sidebar */
 .controls-container {
   border-left: 2px solid var(--fg-muted);
-  padding-left: 20px;
-  margin: 30px 0 40px 0;
-  max-width: 600px;
+  padding-left: 15px;
+  margin: 20px 0 40px 0;
   color: var(--fg-muted);
 }
 
 .input-row {
   display: flex;
-  align-items: center;
-  margin-bottom: 15px;
+  flex-direction: column;
+  margin-bottom: 20px;
 }
 
 .input-row label {
-  width: 150px;
+  font-size: 0.85rem;
+  margin-bottom: 5px;
 }
 
 .terminal-input {
@@ -124,15 +145,15 @@ h1 {
   font-family: var(--font-mono);
   font-size: 16px;
   outline: none;
-  padding: 5px;
-  width: 100px;
+  padding: 5px 0;
+  width: 100%;
 }
 
 /* Buttons */
 .btn-group {
   display: flex;
-  gap: 20px;
-  align-items: center;
+  flex-direction: column;
+  gap: 15px;
   margin-bottom: 30px;
 }
 
@@ -146,6 +167,8 @@ h1 {
   font-size: 16px;
   cursor: pointer;
   transition: all 0.2s;
+  width: 100%;
+  text-align: center;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -166,6 +189,8 @@ h1 {
   font-size: 16px;
   cursor: pointer;
   transition: all 0.2s;
+  width: 100%;
+  text-align: center;
 }
 
 .btn-secondary:hover {
@@ -175,24 +200,46 @@ h1 {
 .status-text {
   font-size: 0.9rem;
   color: var(--fg-muted);
+  margin-top: auto;
 }
 
-/* 3D Viewer Section */
-.viewer-section {
-  border-top: 1px solid rgba(31, 107, 31, 0.3);
-  padding-top: 30px;
+.stat-box {
+  margin-bottom: 15px;
+}
+
+/* Welcome Page Layout */
+.welcome-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 0 5%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.welcome-navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 30px 0;
+  border-bottom: 1px solid rgba(31, 107, 31, 0.3);
+  margin-bottom: 60px;
+}
+
+.welcome-hero {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
   padding-bottom: 60px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 40px;
 }
 
-.viewer-wrapper {
-  height: 400px;
-  border: 1px solid var(--fg-muted);
-  background: rgba(0, 0, 0, 0.5);
-  position: relative;
-  grid-column: 1 / -1;
+.welcome-btn-group {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
 }
 
 /* Cursor Animation */
@@ -212,11 +259,24 @@ h1 {
 }
 
 @media (max-width: 768px) {
-  h1 {
-    font-size: 2.5rem;
+  .welcome-title {
+    font-size: 4rem;
   }
-  .btn-group {
+  .welcome-btn-group {
     flex-direction: column;
-    align-items: flex-start;
+  }
+  .main-content {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .sidebar {
+    width: 100%;
+    min-width: 100%;
+    border-right: none;
+    border-bottom: 1px solid rgba(31, 107, 31, 0.4);
+    height: auto;
+  }
+  .canvas-area {
+    min-height: 50vh;
   }
 }
