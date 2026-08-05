@@ -7,6 +7,9 @@ import math
 import trimesh
 import io
 import os
+import json
+import uuid
+import subprocess
 
 from toolpath import generate_zig_zag_toolpath_on_mesh
 from kinematics import Kinematics5Axis
@@ -33,22 +36,33 @@ async def slice_stl(
         contents = await file.read()
         mesh = trimesh.load(io.BytesIO(contents), file_type='stl')
         
+        # Center mesh and export to temp file
         min_b, max_b = mesh.bounds
         center_x = (min_b[0] + max_b[0]) / 2.0
         center_y = (min_b[1] + max_b[1]) / 2.0
         min_z = min_b[2]
         mesh.apply_translation([-center_x, -center_y, -min_z])
         
-        path = generate_zig_zag_toolpath_on_mesh(mesh, line_width, resolution)
-        if not path:
-            raise ValueError("Failed to generate path. Mesh might be invalid or too small.")
-            
-        kinematics = Kinematics5Axis(bed_center_z=bed_center_z)
-        generator = GCodeGenerator(e_multiplier=0.05, base_feedrate=1200)
-        gcode = generator.generate(path, kinematics)
-        points_3d = [{"x": p[0], "y": p[1], "z": p[2]} for p in path]
+        tmp_stl = f"/tmp/mesh_{uuid.uuid4().hex}.stl"
+        mesh.export(tmp_stl)
         
-        return {"gcode": gcode, "toolpath_points": points_3d}
+        # Call C++ Slicer Engine
+        cmd = ["./slicer_engine", tmp_stl, str(line_width), str(resolution), str(bed_center_z)]
+        if not os.path.exists("./slicer_engine"):
+            # Fallback compile just in case
+            subprocess.run(["g++", "-O3", "-o", "slicer_engine", "slicer.cpp"], check=True)
+            
+        process = subprocess.run(cmd, capture_output=True, text=True)
+        os.remove(tmp_stl)
+        
+        if process.returncode != 0:
+            raise ValueError(f"C++ Engine failed: {process.stderr}")
+            
+        result = json.loads(process.stdout)
+        if "error" in result:
+            raise ValueError(result["error"])
+            
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
