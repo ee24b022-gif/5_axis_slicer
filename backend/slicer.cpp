@@ -61,18 +61,33 @@ bool loadSTL(const string& filename, vector<Triangle>& triangles, Vec3& minB, Ve
     streamsize size = file.tellg();
     file.seekg(0, ios::beg);
     
-    char header[80];
-    file.read(header, 80);
-    uint32_t numTriangles = 0;
-    file.read(reinterpret_cast<char*>(&numTriangles), 4);
+    if (size < 84) return false; // Too small to be a valid STL
     
-    bool isBinary = (size == 84 + numTriangles * 50);
+    char header[200] = {0};
+    file.read(header, min((streamsize)200, size));
+    file.seekg(0, ios::beg);
+    
+    bool isAscii = false;
+    for (int i = 0; i < 180; i++) {
+        if (strncmp(header + i, "facet normal", 12) == 0) {
+            isAscii = true;
+            break;
+        }
+    }
     
     triangles.clear();
     minB = Vec3(1e9, 1e9, 1e9);
     maxB = Vec3(-1e9, -1e9, -1e9);
     
-    if (isBinary) {
+    if (!isAscii) {
+        file.seekg(80, ios::beg);
+        uint32_t numTriangles = 0;
+        file.read(reinterpret_cast<char*>(&numTriangles), 4);
+        
+        if (84 + numTriangles * 50 > size) {
+            return false; // Corrupted binary STL
+        }
+        
         triangles.reserve(numTriangles);
         for (uint32_t i = 0; i < numTriangles; ++i) {
             float normal[3], v[3][3];
@@ -121,6 +136,8 @@ bool loadSTL(const string& filename, vector<Triangle>& triangles, Vec3& minB, Ve
         }
     }
     
+    if (triangles.empty()) return false;
+    
     // Find bounds
     for (const auto& tri : triangles) {
         minB.x = min({minB.x, tri.v0.x, tri.v1.x, tri.v2.x});
@@ -152,7 +169,7 @@ bool loadSTL(const string& filename, vector<Triangle>& triangles, Vec3& minB, Ve
         maxB.z = max({maxB.z, tri.v0.z, tri.v1.z, tri.v2.z});
     }
     
-    return !triangles.empty();
+    return true;
 }
 
 struct Point {
