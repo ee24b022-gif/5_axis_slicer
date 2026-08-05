@@ -1,8 +1,4 @@
-trimesh
-numpy
-scipy
-shapely
 fastapi
 uvicorn
 pydantic
-rtree
+python-multipart
