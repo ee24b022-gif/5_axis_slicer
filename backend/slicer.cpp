@@ -194,7 +194,8 @@ int main(int argc, char** argv) {
     }
     
     // 2D Spatial Grid for fast Z-raycasting
-    double cellSize = 2.0;
+    // Limit grid to max 500x500 to prevent RAM explosion on scaled STLs
+    double cellSize = max(2.0, max(maxB.x - minB.x, maxB.y - minB.y) / 500.0);
     int gridW = ceil((maxB.x - minB.x) / cellSize) + 1;
     int gridH = ceil((maxB.y - minB.y) / cellSize) + 1;
     vector<vector<int>> grid(gridW * gridH);
@@ -278,7 +279,7 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < path.size(); ++i) {
         const auto& pt = path[i];
         
-        points_json << "{\"x\":" << pt.x << ",\"y\":" << pt.y << ",\"z\":" << pt.z << "}";
+        points_json << fixed << setprecision(2) << "{\"x\":" << pt.x << ",\"y\":" << pt.y << ",\"z\":" << pt.z << "}";
         if (i < path.size() - 1) points_json << ",";
         
         // Inverse Kinematics

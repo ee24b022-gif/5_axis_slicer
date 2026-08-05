@@ -26,14 +26,26 @@ function Toolpath({ points, progress }: { points: {x: number, y: number, z: numb
   const pointCount = Math.max(2, Math.floor(points.length * (progress / 100)));
   const visiblePoints = points.slice(0, pointCount);
   
-  const vectorPoints = visiblePoints.map(p => new THREE.Vector3(p.x, p.y, p.z));
-  const curve = new THREE.CatmullRomCurve3(vectorPoints);
-  const tubeGeometry = new THREE.TubeGeometry(curve, visiblePoints.length * 2, 0.2, 4, false);
+  // Flatten points for Float32Array (much faster than Vector3 array)
+  const positions = new Float32Array(visiblePoints.length * 3);
+  for (let i = 0; i < visiblePoints.length; i++) {
+    positions[i * 3] = visiblePoints[i].x;
+    positions[i * 3 + 1] = visiblePoints[i].y;
+    positions[i * 3 + 2] = visiblePoints[i].z;
+  }
 
   return (
-    <mesh geometry={tubeGeometry}>
-      <meshBasicMaterial color="#39ff14" wireframe={true} />
-    </mesh>
+    <line>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          count={visiblePoints.length}
+          array={positions}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial color="#39ff14" />
+    </line>
   );
 }
 
