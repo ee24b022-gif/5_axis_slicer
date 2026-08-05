@@ -26,7 +26,7 @@ function Toolpath({ points, progress }: { points: {x: number, y: number, z: numb
   const pointCount = Math.max(2, Math.floor(points.length * (progress / 100)));
   const visiblePoints = points.slice(0, pointCount);
   
-  const geometry = useMemo(() => {
+  const line = useMemo(() => {
     const positions = new Float32Array(visiblePoints.length * 3);
     for (let i = 0; i < visiblePoints.length; i++) {
       positions[i * 3] = visiblePoints[i].x;
@@ -35,14 +35,11 @@ function Toolpath({ points, progress }: { points: {x: number, y: number, z: numb
     }
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    return geom;
+    const material = new THREE.LineBasicMaterial({ color: 0x39ff14 });
+    return new THREE.Line(geom, material);
   }, [visiblePoints]);
 
-  return (
-    <line geometry={geometry}>
-      <lineBasicMaterial color="#39ff14" />
-    </line>
-  );
+  return <primitive object={line} />;
 }
 
 function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
