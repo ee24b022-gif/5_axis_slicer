@@ -19,7 +19,40 @@ function Toolpath({ points }: { points: {x: number, y: number, z: number}[] }) {
   );
 }
 
+function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
+  return (
+    <div className="layout">
+      {/* NAVBAR */}
+      <nav className="navbar">
+        <div className="nav-brand text-muted">
+          &gt;_ OPEN5X_SLICER.EXE
+        </div>
+      </nav>
+
+      {/* HERO SECTION */}
+      <main className="hero" style={{ alignItems: 'center', textAlign: 'center' }}>
+        <div className="accent-text">
+          &gt; SYSTEM READY...
+        </div>
+        
+        <h1 style={{ fontSize: '5rem', marginBottom: '40px' }}>WELCOME TO<br/>5 AXIS SLICER</h1>
+        
+        <div className="btn-group" style={{ justifyContent: 'center' }}>
+          <button className="btn-primary" onClick={onEnter}>
+            Enter Slicer Page
+          </button>
+          
+          <button className="btn-secondary" onClick={() => alert("Destination TBD")}>
+            [ Coming Soon ]
+          </button>
+        </div>
+      </main>
+    </div>
+  );
+}
+
 function App() {
+  const [hasEntered, setHasEntered] = useState(false);
   const [lineWidth, setLineWidth] = useState(0.4);
   const [bedCenterZ, setBedCenterZ] = useState(50.0);
   const [file, setFile] = useState<File | null>(null);
@@ -81,6 +114,10 @@ function App() {
       setIsSlicing(false);
     }
   };
+
+  if (!hasEntered) {
+    return <WelcomeScreen onEnter={() => setHasEntered(true)} />;
+  }
 
   return (
     <div className="layout">
