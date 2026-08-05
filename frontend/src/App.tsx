@@ -69,9 +69,8 @@ function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
 
 function App() {
   const [hasEntered, setHasEntered] = useState(false);
-  const [lineWidth, setLineWidth] = useState(0.4);
+  const [infill, setInfill] = useState(20);
   const [resolution, setResolution] = useState(1.0);
-  const [bedCenterZ, setBedCenterZ] = useState(50.0);
   const [file, setFile] = useState<File | null>(null);
   
   const [stlGeometry, setStlGeometry] = useState<THREE.BufferGeometry | null>(null);
@@ -133,9 +132,10 @@ function App() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("line_width", lineWidth.toString());
-      formData.append("bed_center_z", bedCenterZ.toString());
+      formData.append("line_width", "0.4");
+      formData.append("bed_center_z", "50.0");
       formData.append("resolution", resolution.toString());
+      formData.append("infill", infill.toString());
       
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await axios.post(`${apiUrl}/slice_stl`, formData, {
@@ -191,13 +191,15 @@ function App() {
           
           <div className="controls-container">
             <div className="input-row">
-              <label>LINE WIDTH (mm)</label>
+              <label>INFILL DENSITY (%)</label>
               <input 
                 type="number" 
                 className="terminal-input"
-                step="0.05" 
-                value={lineWidth} 
-                onChange={e => setLineWidth(parseFloat(e.target.value))} 
+                step="5" 
+                min="0"
+                max="100"
+                value={infill} 
+                onChange={e => setInfill(parseInt(e.target.value))} 
               />
             </div>
             
@@ -209,17 +211,6 @@ function App() {
                 step="0.1" 
                 value={resolution} 
                 onChange={e => setResolution(parseFloat(e.target.value))} 
-              />
-            </div>
-            
-            <div className="input-row">
-              <label>BED CENTER Z (mm)</label>
-              <input 
-                type="number" 
-                className="terminal-input"
-                step="1" 
-                value={bedCenterZ} 
-                onChange={e => setBedCenterZ(parseFloat(e.target.value))} 
               />
             </div>
             
@@ -275,7 +266,7 @@ function App() {
 
         {/* MAIN CANVAS */}
         <main className="canvas-area">
-          <Canvas camera={{ position: [40, 40, 40], up: [0, 0, 1] }}>
+          <Canvas camera={{ position: [0, -80, 15], up: [0, 0, 1], fov: 50 }}>
             <ambientLight intensity={0.5} />
             <pointLight position={[100, 100, 100]} intensity={1} />
             <Grid infiniteGrid fadeDistance={100} sectionColor="#1f6b1f" cellColor="transparent" />
