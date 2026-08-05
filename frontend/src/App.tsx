@@ -44,15 +44,13 @@ function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
 
   return (
     <div style={{ padding: '40px', display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100vh', width: '100vw' }}>
-      <div className="ascii-art" style={{ textAlign: 'left', marginBottom: '40px', fontSize: '20px' }}>
-{`
- ___                   ___       
-/ _ \\ _ __  ___ _ __  | __|_  __ 
-|(_) | '_ \\/ -_) ' \\  |__ \\ \\/ / 
-\\___/| .__/\\___|_||_| |___/\\  /  
-     |_|                   /_/   
-`}
-      </div>
+      <pre className="ascii-art" style={{ textAlign: 'left', marginBottom: '40px', fontSize: '20px', margin: '0 0 40px 0' }}>
+{`  ___                   ___       
+ / _ \\ _ __  ___ _ __  | __|_  __ 
+| (_) | '_ \\/ -_) ' \\  |__ \\ \\/ / 
+ \\___/| .__/\\___|_||_| |___/\\  /  
+      |_|                   /_/   `}
+      </pre>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '40px' }}>
         {lines.map((line, i) => <div key={i}>{line}</div>)}
         {lines.length === fullText.length && (
@@ -141,16 +139,14 @@ function App() {
     <div className="app-container">
       {/* LEFT PANE - COMMAND LINE */}
       <div className="pane sidebar">
-        <div className="ascii-art">
-{`
- ___                   ___       
-/ _ \\ _ __  ___ _ __  | __|_  __ 
-|(_) | '_ \\/ -_) ' \\  |__ \\ \\/ / 
-\\___/| .__/\\___|_||_| |___/\\  /  
-     |_|                   /_/   
-SLICER v1.0.0
-`}
-        </div>
+        <pre className="ascii-art">
+{`  ___                   ___       
+ / _ \\ _ __  ___ _ __  | __|_  __ 
+| (_) | '_ \\/ -_) ' \\  |__ \\ \\/ / 
+ \\___/| .__/\\___|_||_| |___/\\  /  
+      |_|                   /_/   
+SLICER v1.0.0`}
+        </pre>
 
         <div>
           <div className="terminal-prompt">
