@@ -13,9 +13,10 @@ function StlModel({ geometry }: { geometry: THREE.BufferGeometry | null }) {
     <mesh geometry={geometry}>
       <meshStandardMaterial 
         color="#1f6b1f" 
-        transparent={true} 
-        opacity={0.3} 
-        wireframe={true} 
+        roughness={0.4}
+        metalness={0.8}
+        transparent={false} 
+        wireframe={false} 
       />
     </mesh>
   );
