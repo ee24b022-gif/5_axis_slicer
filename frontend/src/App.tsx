@@ -77,6 +77,7 @@ function App() {
   
   const [isSlicing, setIsSlicing] = useState(false);
   const [toolpathPoints, setToolpathPoints] = useState([]);
+  const [gcodeData, setGcodeData] = useState<string | null>(null);
   const [previewProgress, setPreviewProgress] = useState(100);
   const [status, setStatus] = useState<string>('SYSTEM_READY');
   
@@ -127,6 +128,7 @@ function App() {
     setIsSlicing(true);
     setStatus('PROCESSING_STL...');
     setToolpathPoints([]);
+    setGcodeData(null);
     setPreviewProgress(100);
     
     try {
@@ -146,6 +148,7 @@ function App() {
       const points = response.data.toolpath_points;
       
       setToolpathPoints(points);
+      setGcodeData(gcode);
       setStatus(`SUCCESS: GENERATED ${points.length} Pts`);
       
       const blob = new Blob([gcode], { type: 'text/plain' });
@@ -169,6 +172,19 @@ function App() {
   if (!hasEntered) {
     return <WelcomeScreen onEnter={() => setHasEntered(true)} />;
   }
+
+  const handleDownload = () => {
+    if (!gcodeData || !file) return;
+    const blob = new Blob([gcodeData], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${file.name.replace('.stl', '')}_open5x.gcode`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="app-container">
@@ -246,6 +262,16 @@ function App() {
             <button className="btn-primary" onClick={handleSlice} disabled={isSlicing || !file}>
               {isSlicing ? 'Executing...' : 'Initiate Slicing'}
             </button>
+            
+            {gcodeData && (
+              <button 
+                className="btn-secondary" 
+                onClick={handleDownload} 
+                style={{ marginTop: '10px', width: '100%', borderColor: '#39ff14', color: '#39ff14' }}
+              >
+                [ Download G-Code ]
+              </button>
+            )}
           </div>
           
           <div style={{ marginTop: '30px', borderTop: '1px solid rgba(31,107,31,0.4)', paddingTop: '20px' }}>
