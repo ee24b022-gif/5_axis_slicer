@@ -1,0 +1,117 @@
+:root {
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #0d1117;
+
+  font-synthesizes: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+h1 {
+  font-size: 2rem;
+  line-height: 1.1;
+  margin-bottom: 0.5rem;
+  background: -webkit-linear-gradient(45deg, #4facfe 0%, #00f2fe 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.app-container {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+}
+
+.sidebar {
+  width: 350px;
+  background: rgba(22, 27, 34, 0.8);
+  backdrop-filter: blur(12px);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.settings-group {
+  margin-top: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.input-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.input-field label {
+  font-size: 0.9rem;
+  color: #8b949e;
+  font-weight: 500;
+}
+
+.input-field input {
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #c9d1d9;
+  font-size: 1rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.input-field input:focus {
+  outline: none;
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.3);
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.8em 1.2em;
+  font-size: 1em;
+  font-weight: 600;
+  font-family: inherit;
+  background: linear-gradient(90deg, #238636 0%, #2ea043 100%);
+  color: #ffffff;
+  cursor: pointer;
+  transition: filter 0.25s, transform 0.1s;
+  margin-top: auto;
+  box-shadow: 0 4px 15px rgba(46, 160, 67, 0.4);
+}
+button:hover {
+  filter: brightness(1.2);
+}
+button:active {
+  transform: translateY(2px);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.viewer-container {
+  flex-grow: 1;
+  position: relative;
+  background: radial-gradient(circle at center, #1f242c 0%, #0d1117 100%);
+}

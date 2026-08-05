@@ -1,0 +1,7 @@
+trimesh
+numpy
+scipy
+shapely
+fastapi
+uvicorn
+pydantic

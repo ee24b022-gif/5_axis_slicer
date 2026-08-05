@@ -1,0 +1,14 @@
+# Node
+node_modules/
+dist/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+output.gcode
+
+# OS
+.DS_Store
