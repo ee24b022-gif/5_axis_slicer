@@ -45,15 +45,22 @@ async def slice_stl(
             # Fallback compile just in case
             subprocess.run(["g++", "-O3", "-o", "slicer_engine", "slicer.cpp"], check=True)
             
+        if os.path.exists("./slicer_engine"):
+            os.chmod("./slicer_engine", 0o755)
+            
         process = subprocess.run(cmd, capture_output=True, text=True)
         os.remove(tmp_stl)
         
         if process.returncode != 0:
-            raise ValueError(f"C++ Engine failed: {process.stderr}")
+            raise HTTPException(status_code=400, detail=f"C++ Engine failed (Code {process.returncode}): {process.stderr}")
             
-        result = json.loads(process.stdout)
+        try:
+            result = json.loads(process.stdout)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON from C++ engine. Output: {process.stdout[:100]}")
+            
         if "error" in result:
-            raise ValueError(result["error"])
+            raise HTTPException(status_code=400, detail=result["error"])
             
         return result
     except Exception as e:

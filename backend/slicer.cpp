@@ -316,6 +316,11 @@ int main(int argc, char** argv) {
         return 0;
     }
     
+    if ((maxB.x - minB.x) > 500.0 || (maxB.y - minB.y) > 500.0) {
+        cout << "{\"error\": \"Model is too large (>500mm). Scale down your STL to millimeters to prevent memory crash.\"}\n";
+        return 0;
+    }
+    
     // Build BVH
     tri_indices.resize(triangles.size());
     tri_bounds.resize(triangles.size());

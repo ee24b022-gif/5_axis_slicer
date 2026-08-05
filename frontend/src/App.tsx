@@ -178,9 +178,11 @@ function App() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to slice:", error);
-      setStatus('ERR: SLICE_FAILED');
+      const errMsg = error.response?.data?.detail || 'SLICE_FAILED';
+      setStatus(`ERR: ${errMsg.substring(0, 30)}`);
+      alert(`Slicing failed: ${errMsg}`);
     } finally {
       setIsSlicing(false);
     }
