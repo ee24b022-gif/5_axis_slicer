@@ -1,13 +1,11 @@
 :root {
-  /* Terminal Design Tokens */
-  --bg: #0a0a0a;
-  --fg-primary: #33ff00;
-  --fg-muted: #1f521f;
-  --fg-error: #ff3333;
-  --font-mono: 'VT323', monospace;
+  /* Terminal Design Tokens matching the screenshot */
+  --bg: #090a09;
+  --fg-primary: #39ff14; /* vibrant neon green */
+  --fg-muted: #1f6b1f; /* dimmed green */
+  --font-mono: 'JetBrains Mono', monospace;
   
-  --text-glow: 0 0 5px rgba(51, 255, 0, 0.5);
-  --text-glow-intense: 0 0 10px rgba(51, 255, 0, 0.8);
+  --text-glow: 0 0 8px rgba(57, 255, 20, 0.4);
 }
 
 * {
@@ -19,13 +17,13 @@ body {
   font-family: var(--font-mono);
   background-color: var(--bg);
   color: var(--fg-primary);
-  text-shadow: var(--text-glow);
-  overflow: hidden;
-  font-size: 20px;
-  text-transform: uppercase;
+  /* The screenshot does not have excessive text shadow on all text, only accents if any */
+  overflow-x: hidden;
+  font-size: 16px;
+  line-height: 1.6;
 }
 
-/* CRT Scanline Overlay */
+/* Thicker CRT Scanline Overlay */
 body::after {
   content: " ";
   display: block;
@@ -36,141 +34,165 @@ body::after {
   right: 0;
   background: linear-gradient(
     to bottom,
-    rgba(18, 16, 16, 0) 50%,
-    rgba(0, 0, 0, 0.25) 50%
+    rgba(0, 0, 0, 0) 50%,
+    rgba(0, 0, 0, 0.35) 50%
   );
-  background-size: 100% 4px;
+  background-size: 100% 6px;
   z-index: 50;
   pointer-events: none;
 }
 
-h1, h2, h3 {
-  margin: 0;
-  font-weight: normal;
+/* Typography */
+h1 {
+  font-size: 4rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin: 10px 0;
+  line-height: 1.1;
+  letter-spacing: -2px;
+  text-shadow: var(--text-glow);
 }
 
-/* App Container (tmux split style) */
-.app-container {
-  display: flex;
-  width: 100vw;
-  height: 100vh;
-  border: 1px solid var(--fg-primary);
-  padding: 10px;
+.text-muted {
+  color: var(--fg-muted);
 }
 
-/* Panes */
-.pane {
-  border: 1px dashed var(--fg-primary);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar {
-  width: 400px;
-  border-right: none;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-@media (max-width: 768px) {
-  .app-container {
-    flex-direction: column;
-    height: auto;
-    min-height: 100vh;
-  }
-  .sidebar {
-    width: 100%;
-    border-bottom: 1px dashed var(--fg-primary);
-  }
-  .viewer-pane {
-    min-height: 50vh;
-  }
-}
-
-.viewer-pane {
-  flex-grow: 1;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-}
-
-.pane-header {
-  border-bottom: 1px dashed var(--fg-primary);
-  padding-bottom: 10px;
+.accent-text {
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
   margin-bottom: 20px;
-  text-align: center;
-  letter-spacing: 2px;
 }
 
-/* Inputs / Terminal Prompt */
-.terminal-prompt {
+/* Layout */
+.layout {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  min-height: 100vh;
+  padding: 0 5%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Header Navbar */
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 30px 0;
+  border-bottom: 1px solid rgba(31, 107, 31, 0.3);
+  margin-bottom: 60px;
+}
+
+.nav-brand {
+  font-weight: 700;
+}
+
+/* Hero Section */
+.hero {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-bottom: 60px;
+}
+
+/* Controls / Body section (the left border part) */
+.controls-container {
+  border-left: 2px solid var(--fg-muted);
+  padding-left: 20px;
+  margin: 30px 0 40px 0;
+  max-width: 600px;
+  color: var(--fg-muted);
+}
+
+.input-row {
+  display: flex;
+  align-items: center;
   margin-bottom: 15px;
 }
 
-.prompt-line {
-  display: flex;
-  align-items: center;
+.input-row label {
+  width: 150px;
 }
 
-.prompt-symbol {
-  margin-right: 10px;
-}
-
-.terminal-prompt input {
+.terminal-input {
   background: transparent;
   border: none;
+  border-bottom: 1px solid var(--fg-muted);
   color: var(--fg-primary);
   font-family: var(--font-mono);
-  font-size: 20px;
+  font-size: 16px;
   outline: none;
-  text-shadow: var(--text-glow);
-  width: 100%;
-}
-
-.terminal-prompt input[type="file"] {
-  display: none;
-}
-
-.file-upload-label {
-  cursor: pointer;
-  display: inline-block;
-  margin-top: 5px;
-}
-.file-upload-label:hover {
-  background: var(--fg-primary);
-  color: var(--bg);
-  text-shadow: none;
+  padding: 5px;
+  width: 100px;
 }
 
 /* Buttons */
-.terminal-btn {
-  background: transparent;
-  border: none;
-  color: var(--fg-primary);
-  font-family: var(--font-mono);
-  font-size: 24px;
-  cursor: pointer;
-  text-align: left;
-  padding: 0;
-  margin-top: 20px;
-  text-shadow: var(--text-glow);
+.btn-group {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  margin-bottom: 30px;
 }
 
-.terminal-btn:hover:not(:disabled) {
-  background: var(--fg-primary);
+.btn-primary {
+  background-color: var(--fg-primary);
   color: var(--bg);
-  text-shadow: none;
+  border: none;
+  padding: 12px 24px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-.terminal-btn:disabled {
-  color: var(--fg-muted);
-  text-shadow: none;
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.8;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-secondary {
+  background-color: transparent;
+  color: var(--fg-primary);
+  border: 1px dashed var(--fg-primary);
+  padding: 12px 24px;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+  background-color: rgba(57, 255, 20, 0.1);
+}
+
+.status-text {
+  font-size: 0.9rem;
+  color: var(--fg-muted);
+}
+
+/* 3D Viewer Section */
+.viewer-section {
+  border-top: 1px solid rgba(31, 107, 31, 0.3);
+  padding-top: 30px;
+  padding-bottom: 60px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 40px;
+}
+
+.viewer-wrapper {
+  height: 400px;
+  border: 1px solid var(--fg-muted);
+  background: rgba(0, 0, 0, 0.5);
+  position: relative;
+  grid-column: 1 / -1;
 }
 
 /* Cursor Animation */
@@ -189,18 +211,12 @@ h1, h2, h3 {
   50% { opacity: 0; }
 }
 
-.ascii-art {
-  white-space: pre;
-  font-size: 14px;
-  line-height: 1.1;
-  margin-bottom: 20px;
-  text-align: center;
-}
-
-/* Canvas Container */
-.canvas-wrapper {
-  flex-grow: 1;
-  position: relative;
-  /* subtle inner glow to mimic screen edge */
-  box-shadow: inset 0 0 20px rgba(51, 255, 0, 0.1);
+@media (max-width: 768px) {
+  h1 {
+    font-size: 2.5rem;
+  }
+  .btn-group {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }

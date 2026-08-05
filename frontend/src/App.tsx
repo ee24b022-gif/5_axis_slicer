@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import axios from 'axios';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
@@ -14,61 +14,12 @@ function Toolpath({ points }: { points: {x: number, y: number, z: number}[] }) {
 
   return (
     <mesh geometry={tubeGeometry}>
-      <meshBasicMaterial color="#33ff00" wireframe={true} />
+      <meshBasicMaterial color="#39ff14" wireframe={true} />
     </mesh>
   );
 }
 
-function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
-  const [lines, setLines] = useState<string[]>([]);
-  const fullText = [
-    "INITIALIZING OPEN5X SLICING ENGINE...",
-    "LOADING GEOMETRY KERNEL... [OK]",
-    "CALIBRATING 5-AXIS KINEMATICS... [OK]",
-    "ESTABLISHING U-V BED ROTATION MATRIX... [OK]",
-    "READY."
-  ];
-
-  useEffect(() => {
-    let currentLine = 0;
-    const interval = setInterval(() => {
-      if (currentLine < fullText.length) {
-        setLines(prev => [...prev, fullText[currentLine]]);
-        currentLine++;
-      } else {
-        clearInterval(interval);
-      }
-    }, 400);
-    return () => clearInterval(interval);
-  }, []);
-
-  return (
-    <div style={{ padding: '40px', display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100vh', width: '100vw' }}>
-      <pre className="ascii-art" style={{ textAlign: 'left', marginBottom: '40px', fontSize: '20px', margin: '0 0 40px 0' }}>
-{`  ___                   ___       
- / _ \\ _ __  ___ _ __  | __|_  __ 
-| (_) | '_ \\/ -_) ' \\  |__ \\ \\/ / 
- \\___/| .__/\\___|_||_| |___/\\  /  
-      |_|                   /_/   `}
-      </pre>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '40px' }}>
-        {lines.map((line, i) => <div key={i}>{line}</div>)}
-        {lines.length === fullText.length && (
-          <div><span className="cursor-blink"></span></div>
-        )}
-      </div>
-      
-      {lines.length === fullText.length && (
-        <button className="terminal-btn" style={{ fontSize: '32px' }} onClick={onEnter}>
-          [ INITIATE_HACK_SEQUENCE ]
-        </button>
-      )}
-    </div>
-  );
-}
-
 function App() {
-  const [hasEntered, setHasEntered] = useState(false);
   const [lineWidth, setLineWidth] = useState(0.4);
   const [bedCenterZ, setBedCenterZ] = useState(50.0);
   const [file, setFile] = useState<File | null>(null);
@@ -111,7 +62,7 @@ function App() {
       const points = response.data.toolpath_points;
       
       setToolpathPoints(points);
-      setStatus(`SUCCESS: GENERATED ${points.length} Pts`);
+      setStatus(`SUCCESS: GENERATED ${points.length} POINTS`);
       
       const blob = new Blob([gcode], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
@@ -131,98 +82,101 @@ function App() {
     }
   };
 
-  if (!hasEntered) {
-    return <WelcomeScreen onEnter={() => setHasEntered(true)} />;
-  }
-
   return (
-    <div className="app-container">
-      {/* LEFT PANE - COMMAND LINE */}
-      <div className="pane sidebar">
-        <pre className="ascii-art">
-{`  ___                   ___       
- / _ \\ _ __  ___ _ __  | __|_  __ 
-| (_) | '_ \\/ -_) ' \\  |__ \\ \\/ / 
- \\___/| .__/\\___|_||_| |___/\\  /  
-      |_|                   /_/   
-SLICER v1.0.0`}
-        </pre>
-
-        <div>
-          <div className="terminal-prompt">
-            <span className="prompt-symbol">open5x@local:~$</span>
-            <div>{status}<span className="cursor-blink"></span></div>
-          </div>
+    <div className="layout">
+      {/* NAVBAR */}
+      <nav className="navbar">
+        <div className="nav-brand text-muted">
+          &gt;_ OPEN5X_SLICER.EXE
         </div>
+        <button className="btn-secondary" onClick={() => window.location.reload()} style={{ padding: '8px 16px', fontSize: '14px' }}>
+          [ RESTART_KERNEL ]
+        </button>
+      </nav>
 
-        <div style={{ marginTop: '20px' }}>
-          <div className="terminal-prompt">
-            <div className="prompt-line">
-              <span className="prompt-symbol">&gt;</span>
-              <span>SELECT_TARGET_STL</span>
-            </div>
-            <label className="file-upload-label">
-              [ {file ? file.name : "BROWSE_FILES"} ]
-              <input 
-                type="file" 
-                accept=".stl" 
-                onChange={handleFileChange} 
-                ref={fileInputRef}
-              />
-            </label>
+      {/* HERO SECTION */}
+      <main className="hero">
+        <div className="accent-text">
+          &gt; INITIALIZING GEOMETRY PROTOCOLS...
+        </div>
+        
+        <h1>GENERATE 5-AXIS<br/>CONFORMAL TOOLPATHS</h1>
+        
+        <div className="controls-container">
+          <p style={{ marginTop: 0, marginBottom: '20px' }}>
+            Open5x Slicer brings your team together with powerful tools designed to seamlessly convert 3D meshes into 5-axis G-code for complex architectures.
+          </p>
+          
+          <div className="input-row">
+            <label>LINE WIDTH</label>
+            <input 
+              type="number" 
+              className="terminal-input"
+              step="0.05" 
+              value={lineWidth} 
+              onChange={e => setLineWidth(parseFloat(e.target.value))} 
+            />
           </div>
           
-          <div className="terminal-prompt" style={{ marginTop: '10px' }}>
-            <div className="prompt-line">
-              <span className="prompt-symbol">&gt;</span>
-              <span>SET_LINE_WIDTH</span>
-            </div>
-            <div className="prompt-line">
-              <span className="prompt-symbol" style={{ visibility: 'hidden'}}>&gt;</span>
-              <input 
-                type="number" 
-                step="0.05" 
-                value={lineWidth} 
-                onChange={e => setLineWidth(parseFloat(e.target.value))} 
-              />
-            </div>
-          </div>
-          
-          <div className="terminal-prompt" style={{ marginTop: '10px' }}>
-            <div className="prompt-line">
-              <span className="prompt-symbol">&gt;</span>
-              <span>SET_BED_CENTER_Z</span>
-            </div>
-            <div className="prompt-line">
-              <span className="prompt-symbol" style={{ visibility: 'hidden'}}>&gt;</span>
-              <input 
-                type="number" 
-                step="1" 
-                value={bedCenterZ} 
-                onChange={e => setBedCenterZ(parseFloat(e.target.value))} 
-              />
-            </div>
+          <div className="input-row">
+            <label>BED CENTER Z</label>
+            <input 
+              type="number" 
+              className="terminal-input"
+              step="1" 
+              value={bedCenterZ} 
+              onChange={e => setBedCenterZ(parseFloat(e.target.value))} 
+            />
           </div>
         </div>
         
-        <button className="terminal-btn" onClick={handleSlice} disabled={isSlicing || !file}>
-          [ {isSlicing ? 'EXECUTING...' : 'INITIATE_SLICING'} ]
-        </button>
-      </div>
-      
-      {/* RIGHT PANE - VISUALIZER */}
-      <div className="pane viewer-pane">
-        <div className="pane-header">
-          +--- 3D_VIEWPORT_STREAM ---+
+        <div className="btn-group">
+          <button className="btn-primary" onClick={handleSlice} disabled={isSlicing || !file}>
+            {isSlicing ? 'Executing...' : 'Initiate Slicing'}
+          </button>
+          
+          <label style={{ display: 'inline-block' }}>
+            <span className="btn-secondary">
+              [ {file ? file.name.substring(0, 15) + (file.name.length > 15 ? '...' : '') : "Upload STL"} ]
+            </span>
+            <input 
+              type="file" 
+              accept=".stl" 
+              onChange={handleFileChange} 
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+            />
+          </label>
         </div>
-        <div className="canvas-wrapper">
+        
+        <div className="status-text">
+          STATUS: {status} <span className="cursor-blink"></span>
+        </div>
+      </main>
+
+      {/* 3D VIEWER (BOTTOM GRID) */}
+      <section className="viewer-section">
+        <div>
+          <div className="text-muted" style={{ fontSize: '12px' }}>GEOMETRY ENGINE</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{toolpathPoints.length > 0 ? 'ONLINE' : 'STANDBY'}</div>
+        </div>
+        <div>
+          <div className="text-muted" style={{ fontSize: '12px' }}>TOOLPATH POINTS</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{toolpathPoints.length}</div>
+        </div>
+        <div>
+          <div className="text-muted" style={{ fontSize: '12px' }}>OUTPUT FORMAT</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold' }}>G-CODE</div>
+        </div>
+        
+        <div className="viewer-wrapper">
           <Canvas camera={{ position: [40, 40, 40], up: [0, 0, 1] }}>
-            <Grid infiniteGrid fadeDistance={100} sectionColor="#1f521f" cellColor="#0a0a0a" />
+            <Grid infiniteGrid fadeDistance={100} sectionColor="#1f6b1f" cellColor="#090a09" />
             <Toolpath points={toolpathPoints} />
             <OrbitControls makeDefault />
           </Canvas>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
