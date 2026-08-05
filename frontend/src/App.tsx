@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import axios from 'axios';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
@@ -26,24 +26,20 @@ function Toolpath({ points, progress }: { points: {x: number, y: number, z: numb
   const pointCount = Math.max(2, Math.floor(points.length * (progress / 100)));
   const visiblePoints = points.slice(0, pointCount);
   
-  // Flatten points for Float32Array (much faster than Vector3 array)
-  const positions = new Float32Array(visiblePoints.length * 3);
-  for (let i = 0; i < visiblePoints.length; i++) {
-    positions[i * 3] = visiblePoints[i].x;
-    positions[i * 3 + 1] = visiblePoints[i].y;
-    positions[i * 3 + 2] = visiblePoints[i].z;
-  }
+  const geometry = useMemo(() => {
+    const positions = new Float32Array(visiblePoints.length * 3);
+    for (let i = 0; i < visiblePoints.length; i++) {
+      positions[i * 3] = visiblePoints[i].x;
+      positions[i * 3 + 1] = visiblePoints[i].y;
+      positions[i * 3 + 2] = visiblePoints[i].z;
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return geom;
+  }, [visiblePoints]);
 
   return (
-    <line>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          count={visiblePoints.length}
-          array={positions}
-          itemSize={3}
-        />
-      </bufferGeometry>
+    <line geometry={geometry}>
       <lineBasicMaterial color="#39ff14" />
     </line>
   );
@@ -91,6 +87,7 @@ function App() {
   const [toolpathPoints, setToolpathPoints] = useState([]);
   const [gcodeData, setGcodeData] = useState<string | null>(null);
   const [previewProgress, setPreviewProgress] = useState(100);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [status, setStatus] = useState<string>('SYSTEM_READY');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -138,7 +135,8 @@ function App() {
     }
     
     setIsSlicing(true);
-    setStatus('PROCESSING_STL...');
+    setStatus('UPLOADING_STL...');
+    setUploadProgress(0);
     setToolpathPoints([]);
     setGcodeData(null);
     setPreviewProgress(100);
@@ -153,7 +151,14 @@ function App() {
       
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await axios.post(`${apiUrl}/slice_stl`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(percent);
+            if (percent === 100) setStatus('PROCESSING_STL...');
+          }
+        }
       });
       
       const gcode = response.data.gcode;
@@ -271,8 +276,14 @@ function App() {
               />
             </label>
             
+            {isSlicing && uploadProgress < 100 && (
+              <div style={{ marginTop: '10px', width: '100%', height: '10px', backgroundColor: '#111', border: '1px solid #1f6b1f' }}>
+                <div style={{ height: '100%', backgroundColor: '#39ff14', width: `${uploadProgress}%`, transition: 'width 0.2s' }}></div>
+              </div>
+            )}
+            
             <button className="btn-primary" onClick={handleSlice} disabled={isSlicing || !file}>
-              {isSlicing ? 'Executing...' : 'Initiate Slicing'}
+              {isSlicing ? (uploadProgress < 100 ? `Uploading ${uploadProgress}%...` : 'Executing C++ Engine...') : 'Initiate Slicing'}
             </button>
             
             {gcodeData && (
