@@ -70,6 +70,7 @@ function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
 function App() {
   const [hasEntered, setHasEntered] = useState(false);
   const [lineWidth, setLineWidth] = useState(0.4);
+  const [resolution, setResolution] = useState(1.0);
   const [bedCenterZ, setBedCenterZ] = useState(50.0);
   const [file, setFile] = useState<File | null>(null);
   
@@ -134,6 +135,7 @@ function App() {
       formData.append("file", file);
       formData.append("line_width", lineWidth.toString());
       formData.append("bed_center_z", bedCenterZ.toString());
+      formData.append("resolution", resolution.toString());
       
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await axios.post(`${apiUrl}/slice_stl`, formData, {
@@ -196,6 +198,17 @@ function App() {
                 step="0.05" 
                 value={lineWidth} 
                 onChange={e => setLineWidth(parseFloat(e.target.value))} 
+              />
+            </div>
+            
+            <div className="input-row">
+              <label>Y-STEP RESOLUTION (mm)</label>
+              <input 
+                type="number" 
+                className="terminal-input"
+                step="0.1" 
+                value={resolution} 
+                onChange={e => setResolution(parseFloat(e.target.value))} 
               />
             </div>
             

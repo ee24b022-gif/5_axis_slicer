@@ -1,6 +1,6 @@
 import numpy as np
 
-def generate_zig_zag_toolpath_on_mesh(mesh, line_width):
+def generate_zig_zag_toolpath_on_mesh(mesh, line_width, y_step=1.0):
     """
     Projects a 2D zig-zag grid downwards onto the 3D mesh to generate a conformal toolpath.
     Returns a list of (x, y, z, nx, ny, nz).
@@ -10,7 +10,7 @@ def generate_zig_zag_toolpath_on_mesh(mesh, line_width):
     
     # Generate 2D zig-zag points in XY plane
     x_coords = np.arange(min_b[0], max_b[0], line_width)
-    y_coords = np.arange(min_b[1], max_b[1], 0.5) # 0.5mm step resolution along the line
+    y_coords = np.arange(min_b[1], max_b[1], y_step) # Configurable resolution
     
     ray_origins = []
     for i, x in enumerate(x_coords):

@@ -23,7 +23,12 @@ app.add_middleware(
 )
 
 @app.post("/slice_stl")
-async def slice_stl(file: UploadFile = File(...), line_width: float = Form(0.4), bed_center_z: float = Form(50.0)):
+async def slice_stl(
+    file: UploadFile = File(...),
+    line_width: float = Form(...),
+    bed_center_z: float = Form(...),
+    resolution: float = Form(1.0)
+):
     try:
         contents = await file.read()
         mesh = trimesh.load(io.BytesIO(contents), file_type='stl')
@@ -34,7 +39,7 @@ async def slice_stl(file: UploadFile = File(...), line_width: float = Form(0.4),
         min_z = min_b[2]
         mesh.apply_translation([-center_x, -center_y, -min_z])
         
-        path = generate_zig_zag_toolpath_on_mesh(mesh, line_width)
+        path = generate_zig_zag_toolpath_on_mesh(mesh, line_width, resolution)
         if not path:
             raise ValueError("Failed to generate path. Mesh might be invalid or too small.")
             
