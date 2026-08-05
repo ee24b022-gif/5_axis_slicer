@@ -34,19 +34,12 @@ async def slice_stl(
 ):
     try:
         contents = await file.read()
-        mesh = trimesh.load(io.BytesIO(contents), file_type='stl')
-        
-        # Center mesh and export to temp file
-        min_b, max_b = mesh.bounds
-        center_x = (min_b[0] + max_b[0]) / 2.0
-        center_y = (min_b[1] + max_b[1]) / 2.0
-        min_z = min_b[2]
-        mesh.apply_translation([-center_x, -center_y, -min_z])
         
         tmp_stl = f"/tmp/mesh_{uuid.uuid4().hex}.stl"
-        mesh.export(tmp_stl)
+        with open(tmp_stl, "wb") as f:
+            f.write(contents)
         
-        # Call C++ Slicer Engine
+        # Call C++ Slicer Engine (Centering is now done in C++)
         cmd = ["./slicer_engine", tmp_stl, str(line_width), str(resolution), str(bed_center_z)]
         if not os.path.exists("./slicer_engine"):
             # Fallback compile just in case

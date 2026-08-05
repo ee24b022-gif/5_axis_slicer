@@ -54,41 +54,95 @@ bool intersectRayTriangle(const Vec3& orig, const Triangle& tri, double& t) {
     return t > 1e-8; // Ray intersection must be positive
 }
 
-// Read Binary STL
+// Read STL (Binary and ASCII) and Center
 bool loadSTL(const string& filename, vector<Triangle>& triangles, Vec3& minB, Vec3& maxB) {
-    ifstream file(filename, ios::binary);
+    ifstream file(filename, ios::binary | ios::ate);
     if (!file) return false;
+    streamsize size = file.tellg();
+    file.seekg(0, ios::beg);
     
     char header[80];
     file.read(header, 80);
-    uint32_t numTriangles;
+    uint32_t numTriangles = 0;
     file.read(reinterpret_cast<char*>(&numTriangles), 4);
     
-    triangles.reserve(numTriangles);
+    bool isBinary = (size == 84 + numTriangles * 50);
+    
+    triangles.clear();
     minB = Vec3(1e9, 1e9, 1e9);
     maxB = Vec3(-1e9, -1e9, -1e9);
     
-    for (uint32_t i = 0; i < numTriangles; ++i) {
-        float normal[3], v0[3], v1[3], v2[3];
-        uint16_t attr;
-        file.read(reinterpret_cast<char*>(normal), 12);
-        file.read(reinterpret_cast<char*>(v0), 12);
-        file.read(reinterpret_cast<char*>(v1), 12);
-        file.read(reinterpret_cast<char*>(v2), 12);
-        file.read(reinterpret_cast<char*>(&attr), 2);
-        
-        Triangle tri;
-        tri.normal = Vec3(normal[0], normal[1], normal[2]);
-        tri.v0 = Vec3(v0[0], v0[1], v0[2]);
-        tri.v1 = Vec3(v1[0], v1[1], v1[2]);
-        tri.v2 = Vec3(v2[0], v2[1], v2[2]);
-        
-        if (tri.normal.dot(tri.normal) < 0.01) {
-            tri.normal = (tri.v1 - tri.v0).cross(tri.v2 - tri.v0);
-            tri.normal.normalize();
+    if (isBinary) {
+        triangles.reserve(numTriangles);
+        for (uint32_t i = 0; i < numTriangles; ++i) {
+            float normal[3], v[3][3];
+            uint16_t attr;
+            file.read(reinterpret_cast<char*>(normal), 12);
+            file.read(reinterpret_cast<char*>(v[0]), 12);
+            file.read(reinterpret_cast<char*>(v[1]), 12);
+            file.read(reinterpret_cast<char*>(v[2]), 12);
+            file.read(reinterpret_cast<char*>(&attr), 2);
+            
+            Triangle tri;
+            tri.normal = Vec3(normal[0], normal[1], normal[2]);
+            tri.v0 = Vec3(v[0][0], v[0][1], v[0][2]);
+            tri.v1 = Vec3(v[1][0], v[1][1], v[1][2]);
+            tri.v2 = Vec3(v[2][0], v[2][1], v[2][2]);
+            if (tri.normal.dot(tri.normal) < 0.01) {
+                tri.normal = (tri.v1 - tri.v0).cross(tri.v2 - tri.v0);
+                tri.normal.normalize();
+            }
+            triangles.push_back(tri);
         }
-        
-        triangles.push_back(tri);
+    } else {
+        // Fallback to basic ASCII parse
+        file.seekg(0, ios::beg);
+        string word;
+        Triangle tri;
+        int vertexCount = 0;
+        while (file >> word) {
+            if (word == "facet") {
+                file >> word; // normal
+                file >> tri.normal.x >> tri.normal.y >> tri.normal.z;
+                vertexCount = 0;
+            } else if (word == "vertex") {
+                if (vertexCount == 0) file >> tri.v0.x >> tri.v0.y >> tri.v0.z;
+                else if (vertexCount == 1) file >> tri.v1.x >> tri.v1.y >> tri.v1.z;
+                else if (vertexCount == 2) {
+                    file >> tri.v2.x >> tri.v2.y >> tri.v2.z;
+                    if (tri.normal.dot(tri.normal) < 0.01) {
+                        tri.normal = (tri.v1 - tri.v0).cross(tri.v2 - tri.v0);
+                        tri.normal.normalize();
+                    }
+                    triangles.push_back(tri);
+                }
+                vertexCount++;
+            }
+        }
+    }
+    
+    // Find bounds
+    for (const auto& tri : triangles) {
+        minB.x = min({minB.x, tri.v0.x, tri.v1.x, tri.v2.x});
+        minB.y = min({minB.y, tri.v0.y, tri.v1.y, tri.v2.y});
+        minB.z = min({minB.z, tri.v0.z, tri.v1.z, tri.v2.z});
+        maxB.x = max({maxB.x, tri.v0.x, tri.v1.x, tri.v2.x});
+        maxB.y = max({maxB.y, tri.v0.y, tri.v1.y, tri.v2.y});
+        maxB.z = max({maxB.z, tri.v0.z, tri.v1.z, tri.v2.z});
+    }
+    
+    // Center mesh
+    double cx = (minB.x + maxB.x) / 2.0;
+    double cy = (minB.y + maxB.y) / 2.0;
+    double cz = minB.z;
+    
+    minB = Vec3(1e9, 1e9, 1e9);
+    maxB = Vec3(-1e9, -1e9, -1e9);
+    
+    for (auto& tri : triangles) {
+        tri.v0.x -= cx; tri.v0.y -= cy; tri.v0.z -= cz;
+        tri.v1.x -= cx; tri.v1.y -= cy; tri.v1.z -= cz;
+        tri.v2.x -= cx; tri.v2.y -= cy; tri.v2.z -= cz;
         
         minB.x = min({minB.x, tri.v0.x, tri.v1.x, tri.v2.x});
         minB.y = min({minB.y, tri.v0.y, tri.v1.y, tri.v2.y});
@@ -97,7 +151,8 @@ bool loadSTL(const string& filename, vector<Triangle>& triangles, Vec3& minB, Ve
         maxB.y = max({maxB.y, tri.v0.y, tri.v1.y, tri.v2.y});
         maxB.z = max({maxB.z, tri.v0.z, tri.v1.z, tri.v2.z});
     }
-    return true;
+    
+    return !triangles.empty();
 }
 
 struct Point {
