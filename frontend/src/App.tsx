@@ -3,14 +3,32 @@ import axios from 'axios';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
 import './index.css';
 
-function Toolpath({ points }: { points: {x: number, y: number, z: number}[] }) {
-  if (!points || points.length === 0) return null;
+function StlModel({ geometry }: { geometry: THREE.BufferGeometry | null }) {
+  if (!geometry) return null;
+  return (
+    <mesh geometry={geometry}>
+      <meshStandardMaterial 
+        color="#1f6b1f" 
+        transparent={true} 
+        opacity={0.3} 
+        wireframe={true} 
+      />
+    </mesh>
+  );
+}
+
+function Toolpath({ points, progress }: { points: {x: number, y: number, z: number}[], progress: number }) {
+  if (!points || points.length < 2) return null;
   
-  const vectorPoints = points.map(p => new THREE.Vector3(p.x, p.y, p.z));
+  const pointCount = Math.max(2, Math.floor(points.length * (progress / 100)));
+  const visiblePoints = points.slice(0, pointCount);
+  
+  const vectorPoints = visiblePoints.map(p => new THREE.Vector3(p.x, p.y, p.z));
   const curve = new THREE.CatmullRomCurve3(vectorPoints);
-  const tubeGeometry = new THREE.TubeGeometry(curve, points.length * 2, 0.2, 4, false);
+  const tubeGeometry = new THREE.TubeGeometry(curve, visiblePoints.length * 2, 0.2, 4, false);
 
   return (
     <mesh geometry={tubeGeometry}>
@@ -55,16 +73,48 @@ function App() {
   const [bedCenterZ, setBedCenterZ] = useState(50.0);
   const [file, setFile] = useState<File | null>(null);
   
+  const [stlGeometry, setStlGeometry] = useState<THREE.BufferGeometry | null>(null);
+  
   const [isSlicing, setIsSlicing] = useState(false);
   const [toolpathPoints, setToolpathPoints] = useState([]);
+  const [previewProgress, setPreviewProgress] = useState(100);
   const [status, setStatus] = useState<string>('SYSTEM_READY');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
-      setStatus(`LOADED: ${e.target.files[0].name}`);
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
+      setStatus(`LOADED: ${selectedFile.name}`);
+      
+      // Parse the STL file to display the model instantly
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target && event.target.result) {
+          try {
+            const loader = new STLLoader();
+            const geometry = loader.parse(event.target.result as ArrayBuffer);
+            
+            // Re-center geometry to match backend's bounding box centering
+            geometry.computeBoundingBox();
+            if (geometry.boundingBox) {
+              const minB = geometry.boundingBox.min;
+              const maxB = geometry.boundingBox.max;
+              const centerX = (minB.x + maxB.x) / 2.0;
+              const centerY = (minB.y + maxB.y) / 2.0;
+              const minZ = minB.z;
+              geometry.translate(-centerX, -centerY, -minZ);
+            }
+            
+            setStlGeometry(geometry);
+          } catch (err) {
+            console.error("Error parsing STL", err);
+            setStatus('ERR: INVALID_STL');
+          }
+        }
+      };
+      reader.readAsArrayBuffer(selectedFile);
     }
   };
 
@@ -77,6 +127,7 @@ function App() {
     setIsSlicing(true);
     setStatus('PROCESSING_STL...');
     setToolpathPoints([]);
+    setPreviewProgress(100);
     
     try {
       const formData = new FormData();
@@ -158,6 +209,20 @@ function App() {
                 onChange={e => setBedCenterZ(parseFloat(e.target.value))} 
               />
             </div>
+            
+            {toolpathPoints.length > 0 && (
+              <div className="input-row" style={{ marginTop: '20px' }}>
+                <label>PREVIEW PROGRESS: {previewProgress}%</label>
+                <input 
+                  type="range" 
+                  min="0" 
+                  max="100" 
+                  value={previewProgress} 
+                  onChange={e => setPreviewProgress(parseInt(e.target.value))}
+                  className="terminal-slider"
+                />
+              </div>
+            )}
           </div>
           
           <div className="btn-group">
@@ -198,9 +263,16 @@ function App() {
         {/* MAIN CANVAS */}
         <main className="canvas-area">
           <Canvas camera={{ position: [40, 40, 40], up: [0, 0, 1] }}>
-            {/* Darker grid to fade into background */}
+            <ambientLight intensity={0.5} />
+            <pointLight position={[100, 100, 100]} intensity={1} />
             <Grid infiniteGrid fadeDistance={100} sectionColor="#1f6b1f" cellColor="transparent" />
-            <Toolpath points={toolpathPoints} />
+            
+            {/* Render uploaded STL Model */}
+            <StlModel geometry={stlGeometry} />
+            
+            {/* Render Toolpath with progress slider */}
+            <Toolpath points={toolpathPoints} progress={previewProgress} />
+            
             <OrbitControls makeDefault />
           </Canvas>
         </main>

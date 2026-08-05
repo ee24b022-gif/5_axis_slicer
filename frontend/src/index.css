@@ -280,3 +280,30 @@ h1 {
     min-height: 50vh;
   }
 }
+
+/* Range Slider */
+.terminal-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 2px;
+  background: var(--fg-muted);
+  outline: none;
+  margin: 15px 0;
+}
+
+.terminal-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  background: var(--fg-primary);
+  cursor: pointer;
+}
+
+.terminal-slider::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  background: var(--fg-primary);
+  cursor: pointer;
+  border: none;
+}
