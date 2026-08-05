@@ -8,6 +8,9 @@
 #include <iomanip>
 #include <sstream>
 #include <limits>
+#include <cstdint>
+#include <initializer_list>
+#include <utility>
 
 using namespace std;
 
