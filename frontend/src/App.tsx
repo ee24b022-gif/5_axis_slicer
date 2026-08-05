@@ -10,13 +10,11 @@ import './index.css';
 function StlModel({ geometry }: { geometry: THREE.BufferGeometry | null }) {
   if (!geometry) return null;
   return (
-    <mesh geometry={geometry}>
+    <mesh geometry={geometry} castShadow receiveShadow>
       <meshStandardMaterial 
-        color="#1f6b1f" 
-        roughness={0.4}
-        metalness={0.8}
-        transparent={false} 
-        wireframe={false} 
+        color="#777777" 
+        roughness={0.5}
+        metalness={0.2}
       />
     </mesh>
   );
@@ -268,10 +266,19 @@ function App() {
 
         {/* MAIN CANVAS */}
         <main className="canvas-area">
-          <Canvas camera={{ position: [0, -80, 15], up: [0, 0, 1], fov: 50 }}>
-            <ambientLight intensity={0.5} />
-            <pointLight position={[100, 100, 100]} intensity={1} />
+          <Canvas shadows camera={{ position: [0, -80, 15], up: [0, 0, 1], fov: 50 }}>
+            {/* 3-Point Lighting Setup */}
+            <ambientLight intensity={0.3} />
+            <directionalLight position={[20, 20, 30]} intensity={1.5} castShadow shadow-mapSize={[1024, 1024]} />
+            <directionalLight position={[-20, -20, 10]} intensity={0.5} />
+            
             <Grid infiniteGrid fadeDistance={100} sectionColor="#1f6b1f" cellColor="transparent" />
+            
+            {/* Shadow Catching Floor at Z=0 */}
+            <mesh position={[0, 0, -0.1]} receiveShadow>
+              <planeGeometry args={[200, 200]} />
+              <shadowMaterial opacity={0.4} />
+            </mesh>
             
             {/* Render uploaded STL Model */}
             <StlModel geometry={stlGeometry} />
