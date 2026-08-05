@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
+// @ts-ignore
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
 import './index.css';
 
