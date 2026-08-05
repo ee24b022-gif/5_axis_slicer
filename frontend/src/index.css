@@ -29,7 +29,7 @@ body {
 body::after {
   content: " ";
   display: block;
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
   bottom: 0;
@@ -68,10 +68,25 @@ h1, h2, h3 {
 
 .sidebar {
   width: 400px;
-  border-right: none; /* middle divider handled by main pane */
+  border-right: none;
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+@media (max-width: 768px) {
+  .app-container {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+  }
+  .sidebar {
+    width: 100%;
+    border-bottom: 1px dashed var(--fg-primary);
+  }
+  .viewer-pane {
+    min-height: 50vh;
+  }
 }
 
 .viewer-pane {
