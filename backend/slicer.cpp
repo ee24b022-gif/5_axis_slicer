@@ -219,28 +219,26 @@ vector<int> tri_indices;
 vector<AABB> tri_bounds;
 
 void updateNodeBounds(int nodeIdx) {
-    auto& node = bvh[nodeIdx];
-    for (int i = 0; i < node.count; i++) {
-        node.bounds.expand(tri_bounds[tri_indices[node.first + i]]);
+    for (int i = 0; i < bvh[nodeIdx].count; i++) {
+        bvh[nodeIdx].bounds.expand(tri_bounds[tri_indices[bvh[nodeIdx].first + i]]);
     }
 }
 
 void buildBVH(int nodeIdx) {
-    auto& node = bvh[nodeIdx];
     updateNodeBounds(nodeIdx);
-    if (node.count <= 4) return;
+    if (bvh[nodeIdx].count <= 4) return;
     
-    Vec3 extent = node.bounds.maxB - node.bounds.minB;
+    Vec3 extent = bvh[nodeIdx].bounds.maxB - bvh[nodeIdx].bounds.minB;
     int axis = 0;
     if (extent.y > extent.x) axis = 1;
     if (extent.z > extent.y && extent.z > extent.x) axis = 2;
     
-    double splitPos = node.bounds.minB.x + extent.x / 2.0;
-    if (axis == 1) splitPos = node.bounds.minB.y + extent.y / 2.0;
-    if (axis == 2) splitPos = node.bounds.minB.z + extent.z / 2.0;
+    double splitPos = bvh[nodeIdx].bounds.minB.x + extent.x / 2.0;
+    if (axis == 1) splitPos = bvh[nodeIdx].bounds.minB.y + extent.y / 2.0;
+    if (axis == 2) splitPos = bvh[nodeIdx].bounds.minB.z + extent.z / 2.0;
     
-    int i = node.first;
-    int j = i + node.count - 1;
+    int i = bvh[nodeIdx].first;
+    int j = i + bvh[nodeIdx].count - 1;
     while (i <= j) {
         double center = (tri_bounds[tri_indices[i]].minB.x + tri_bounds[tri_indices[i]].maxB.x) / 2.0;
         if (axis == 1) center = (tri_bounds[tri_indices[i]].minB.y + tri_bounds[tri_indices[i]].maxB.y) / 2.0;
@@ -249,8 +247,12 @@ void buildBVH(int nodeIdx) {
         else swap(tri_indices[i], tri_indices[j--]);
     }
     
-    int leftCount = i - node.first;
-    if (leftCount == 0 || leftCount == node.count) return; 
+    int leftCount = i - bvh[nodeIdx].first;
+    if (leftCount == 0 || leftCount == bvh[nodeIdx].count) return; 
+    
+    // Save first and count before pushing to vector to avoid dangling reference if vector reallocates
+    int nodeFirst = bvh[nodeIdx].first;
+    int nodeCount = bvh[nodeIdx].count;
     
     int leftNode = bvh.size();
     bvh.push_back(BVHNode());
@@ -260,10 +262,10 @@ void buildBVH(int nodeIdx) {
     bvh[nodeIdx].left = leftNode;
     bvh[nodeIdx].right = rightNode;
     
-    bvh[leftNode].first = node.first;
+    bvh[leftNode].first = nodeFirst;
     bvh[leftNode].count = leftCount;
     bvh[rightNode].first = i;
-    bvh[rightNode].count = node.count - leftCount;
+    bvh[rightNode].count = nodeCount - leftCount;
     
     bvh[nodeIdx].count = 0;
     
