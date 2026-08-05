@@ -192,6 +192,107 @@ string escapeJSON(const string& s) {
     return o;
 }
 
+struct AABB {
+    Vec3 minB, maxB;
+    AABB() : minB(1e9, 1e9, 1e9), maxB(-1e9, -1e9, -1e9) {}
+    void expand(const Vec3& p) {
+        minB.x = min(minB.x, p.x); minB.y = min(minB.y, p.y); minB.z = min(minB.z, p.z);
+        maxB.x = max(maxB.x, p.x); maxB.y = max(maxB.y, p.y); maxB.z = max(maxB.z, p.z);
+    }
+    void expand(const AABB& b) {
+        minB.x = min(minB.x, b.minB.x); minB.y = min(minB.y, b.minB.y); minB.z = min(minB.z, b.minB.z);
+        maxB.x = max(maxB.x, b.maxB.x); maxB.y = max(maxB.y, b.maxB.y); maxB.z = max(maxB.z, b.maxB.z);
+    }
+    bool intersectRayZ(const Vec3& p) const {
+        return p.x >= minB.x && p.x <= maxB.x && p.y >= minB.y && p.y <= maxB.y;
+    }
+};
+
+struct BVHNode {
+    AABB bounds;
+    int left = -1, right = -1;
+    int first = 0, count = 0;
+};
+
+vector<BVHNode> bvh;
+vector<int> tri_indices;
+vector<AABB> tri_bounds;
+
+void updateNodeBounds(int nodeIdx) {
+    auto& node = bvh[nodeIdx];
+    for (int i = 0; i < node.count; i++) {
+        node.bounds.expand(tri_bounds[tri_indices[node.first + i]]);
+    }
+}
+
+void buildBVH(int nodeIdx) {
+    auto& node = bvh[nodeIdx];
+    updateNodeBounds(nodeIdx);
+    if (node.count <= 4) return;
+    
+    Vec3 extent = node.bounds.maxB - node.bounds.minB;
+    int axis = 0;
+    if (extent.y > extent.x) axis = 1;
+    if (extent.z > extent.y && extent.z > extent.x) axis = 2;
+    
+    double splitPos = node.bounds.minB.x + extent.x / 2.0;
+    if (axis == 1) splitPos = node.bounds.minB.y + extent.y / 2.0;
+    if (axis == 2) splitPos = node.bounds.minB.z + extent.z / 2.0;
+    
+    int i = node.first;
+    int j = i + node.count - 1;
+    while (i <= j) {
+        double center = (tri_bounds[tri_indices[i]].minB.x + tri_bounds[tri_indices[i]].maxB.x) / 2.0;
+        if (axis == 1) center = (tri_bounds[tri_indices[i]].minB.y + tri_bounds[tri_indices[i]].maxB.y) / 2.0;
+        if (axis == 2) center = (tri_bounds[tri_indices[i]].minB.z + tri_bounds[tri_indices[i]].maxB.z) / 2.0;
+        if (center < splitPos) i++;
+        else swap(tri_indices[i], tri_indices[j--]);
+    }
+    
+    int leftCount = i - node.first;
+    if (leftCount == 0 || leftCount == node.count) return; 
+    
+    int leftNode = bvh.size();
+    bvh.push_back(BVHNode());
+    int rightNode = bvh.size();
+    bvh.push_back(BVHNode());
+    
+    bvh[nodeIdx].left = leftNode;
+    bvh[nodeIdx].right = rightNode;
+    
+    bvh[leftNode].first = node.first;
+    bvh[leftNode].count = leftCount;
+    bvh[rightNode].first = i;
+    bvh[rightNode].count = node.count - leftCount;
+    
+    bvh[nodeIdx].count = 0;
+    
+    buildBVH(leftNode);
+    buildBVH(rightNode);
+}
+
+void intersectBVH(int nodeIdx, const Vec3& rayOrig, double& maxZ, bool& hit, const vector<Triangle>& triangles, Vec3& bestNormal) {
+    const auto& node = bvh[nodeIdx];
+    if (!node.bounds.intersectRayZ(rayOrig)) return;
+    
+    if (node.count > 0) {
+        for (int i = 0; i < node.count; i++) {
+            double t = 0;
+            if (intersectRayTriangle(rayOrig, triangles[tri_indices[node.first + i]], t)) {
+                double hitZ = rayOrig.z - t;
+                if (hitZ > maxZ) {
+                    maxZ = hitZ;
+                    bestNormal = triangles[tri_indices[node.first + i]].normal;
+                    hit = true;
+                }
+            }
+        }
+    } else {
+        intersectBVH(node.left, rayOrig, maxZ, hit, triangles, bestNormal);
+        intersectBVH(node.right, rayOrig, maxZ, hit, triangles, bestNormal);
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc < 5) {
         cerr << "Usage: ./slicer_engine <file> <line_width> <y_step> <bed_center_z>\n";
@@ -206,34 +307,28 @@ int main(int argc, char** argv) {
     vector<Triangle> triangles;
     Vec3 minB, maxB;
     if (!loadSTL(filename, triangles, minB, maxB)) {
-        cerr << "Failed to load STL\n";
-        return 1;
+        cout << "{\"error\": \"Failed to load STL\"}\n";
+        return 0;
     }
     
-    // 2D Spatial Grid for fast Z-raycasting
-    // Limit grid to max 500x500 to prevent RAM explosion on scaled STLs
-    double cellSize = max(2.0, max(maxB.x - minB.x, maxB.y - minB.y) / 500.0);
-    int gridW = ceil((maxB.x - minB.x) / cellSize) + 1;
-    int gridH = ceil((maxB.y - minB.y) / cellSize) + 1;
-    vector<vector<int>> grid(gridW * gridH);
-    
-    for (int i = 0; i < triangles.size(); ++i) {
-        const auto& tri = triangles[i];
-        int minX = max(0, (int)floor((min({tri.v0.x, tri.v1.x, tri.v2.x}) - minB.x) / cellSize));
-        int maxX = min(gridW - 1, (int)floor((max({tri.v0.x, tri.v1.x, tri.v2.x}) - minB.x) / cellSize));
-        int minY = max(0, (int)floor((min({tri.v0.y, tri.v1.y, tri.v2.y}) - minB.y) / cellSize));
-        int maxY = min(gridH - 1, (int)floor((max({tri.v0.y, tri.v1.y, tri.v2.y}) - minB.y) / cellSize));
-        
-        for (int x = minX; x <= maxX; ++x) {
-            for (int y = minY; y <= maxY; ++y) {
-                grid[y * gridW + x].push_back(i);
-            }
-        }
+    // Build BVH
+    tri_indices.resize(triangles.size());
+    tri_bounds.resize(triangles.size());
+    for (int i = 0; i < (int)triangles.size(); ++i) {
+        tri_indices[i] = i;
+        AABB b;
+        b.expand(triangles[i].v0);
+        b.expand(triangles[i].v1);
+        b.expand(triangles[i].v2);
+        tri_bounds[i] = b;
     }
+    bvh.push_back(BVHNode());
+    bvh[0].first = 0;
+    bvh[0].count = triangles.size();
+    buildBVH(0);
     
-    double zStart = maxB.z + 10.0;
     vector<Point> path;
-    
+    double zStart = maxB.z + 10.0;
     int lineIdx = 0;
     for (double x = minB.x; x <= maxB.x; x += line_width) {
         vector<double> y_pts;
@@ -242,29 +337,16 @@ int main(int argc, char** argv) {
         
         for (double y : y_pts) {
             Vec3 orig(x, y, zStart);
-            int gx = max(0, min(gridW - 1, (int)floor((x - minB.x) / cellSize)));
-            int gy = max(0, min(gridH - 1, (int)floor((y - minB.y) / cellSize)));
-            
-            double bestZ = -1e9;
-            Vec3 bestNormal(0,0,1);
+            double maxZ = -1e9;
             bool hit = false;
+            Vec3 bestNormal;
             
-            for (int idx : grid[gy * gridW + gx]) {
-                double t;
-                if (intersectRayTriangle(orig, triangles[idx], t)) {
-                    double hitZ = zStart - t;
-                    if (hitZ > bestZ) {
-                        bestZ = hitZ;
-                        bestNormal = triangles[idx].normal;
-                        hit = true;
-                    }
-                }
-            }
+            intersectBVH(0, orig, maxZ, hit, triangles, bestNormal);
+            
             if (hit) {
-                path.push_back({x, y, bestZ, bestNormal.x, bestNormal.y, bestNormal.z});
+                path.push_back({x, y, maxZ, bestNormal.x, bestNormal.y, bestNormal.z});
             }
-        }
-        lineIdx++;
+        }lineIdx++;
     }
     
     if (path.empty()) {
