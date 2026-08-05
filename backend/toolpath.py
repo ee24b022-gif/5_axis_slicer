@@ -1,27 +1,5 @@
 import numpy as np
 
-def generate_spiral_toolpath_on_hemisphere(radius, line_width, center=(0, 0, 0)):
-    # ... existing code (keep for fallback/testing) ...
-    path = []
-    num_turns = (np.pi * radius / 2) / line_width
-    max_theta = num_turns * 2 * np.pi
-    resolution = 0.5
-    theta = 0.0
-    while theta <= max_theta:
-        phi = (theta / max_theta) * (np.pi / 2)
-        r_current = radius * np.sin(phi)
-        x = center[0] + r_current * np.cos(theta)
-        y = center[1] + r_current * np.sin(theta)
-        z = center[2] + radius * np.cos(phi)
-        nx = x - center[0]
-        ny = y - center[1]
-        nz = z - center[2]
-        norm = np.sqrt(nx**2 + ny**2 + nz**2)
-        path.append((x, y, z, nx/norm, ny/norm, nz/norm))
-        step = resolution / max(r_current, 0.1)
-        theta += step
-    return path
-
 def generate_zig_zag_toolpath_on_mesh(mesh, line_width):
     """
     Projects a 2D zig-zag grid downwards onto the 3D mesh to generate a conformal toolpath.
@@ -72,9 +50,6 @@ def generate_zig_zag_toolpath_on_mesh(mesh, line_width):
     for i in range(len(ray_origins)):
         if i in best_points:
             pt = best_points[i]
-            # Ensure the normal points upwards (positive Z). If it points downwards, the mesh 
-            # might have inverted normals or we hit an overhang from the inside, but since we 
-            # hit it from the top, trimesh normals should point up.
             path.append((pt['x'], pt['y'], pt['z'], pt['nx'], pt['ny'], pt['nz']))
             
     return path
