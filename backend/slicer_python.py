@@ -180,6 +180,14 @@ def generate_infill(segments, min_x, max_x, min_y, max_y, line_width):
                 line_pts.append((x0, y))
                 line_pts.append((x1, y))
                 
+        if line_pts:
+            infill_lines.extend(line_pts)
+            
+        y += line_width
+        idx += 1
+        
+    return infill_lines
+                
 def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0):
     original_triangles, min_b, max_b = load_stl(file_bytes)
     
