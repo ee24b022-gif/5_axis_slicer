@@ -465,11 +465,21 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     last_mx = last_my = last_mz = last_mu = last_mv = 0.0
     is_first = True
     
-    points_json = []
+    points_json = {
+        "x": [],
+        "y": [],
+        "z": [],
+        "layer": [],
+        "type": []
+    }
     
     for pt in path:
         px, py, pz, nx, ny, nz, layer, ptype = pt
-        points_json.append({"x": round(px, 2), "y": round(py, 2), "z": round(pz, 2), "layer": layer, "type": ptype})
+        points_json["x"].append(round(px, 2))
+        points_json["y"].append(round(py, 2))
+        points_json["z"].append(round(pz, 2))
+        points_json["layer"].append(layer)
+        points_json["type"].append(0 if ptype == "perimeter" else 1)
         
         v_rad = math.atan2(nx, ny)
         xy_mag = math.sqrt(nx*nx + ny*ny)

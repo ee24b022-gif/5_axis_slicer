@@ -59,55 +59,87 @@ function StlModel({ geometry, modelScale, rotX, rotY, rotZ, posX, posY }: any) {
   );
 }
 
-function Toolpath({ points, progress, maxVisibleLayer, isolateLayer }: { points: any[], progress: number, maxVisibleLayer: number, isolateLayer: boolean }) {
-  if (!points || points.length < 2) return null;
+function Toolpath({ points, progress, maxVisibleLayer, isolateLayer }: { points: any, progress: number, maxVisibleLayer: number, isolateLayer: boolean }) {
+  if (!points || !points.x || points.x.length < 2) return null;
   
-  const pointCount = Math.max(2, Math.floor(points.length * (progress / 100)));
-  const visiblePoints = points.slice(0, pointCount).filter(p => isolateLayer ? p.layer === maxVisibleLayer : p.layer <= maxVisibleLayer);
+  const totalPoints = points.x.length;
+  const pointCount = Math.max(2, Math.floor(totalPoints * (progress / 100)));
   
-  const lines = useMemo(() => {
-    const segments = [];
-    let currentSegment: any[] = [];
-    let currentType = visiblePoints[0]?.type || 'perimeter';
-    let currentLayer = visiblePoints[0]?.layer || 0;
+  const lineGeometries = useMemo(() => {
+    const groups: Record<string, number[]> = {};
+    const colors = [0xffff00, 0x00ff00, 0x00ffff, 0x1e90ff, 0xff00ff, 0xff4500];
     
-    for (let i = 0; i < visiblePoints.length; i++) {
-      const p = visiblePoints[i];
-      if (p.type !== currentType || p.layer !== currentLayer || (i > 0 && Math.abs(p.z - visiblePoints[i-1].z) > 0.1 && p.type === 'infill') || (i > 0 && Math.sqrt(Math.pow(p.x - visiblePoints[i-1].x, 2) + Math.pow(p.y - visiblePoints[i-1].y, 2)) > 5.0)) {
-        if (currentSegment.length > 1) segments.push({ type: currentType, layer: currentLayer, points: currentSegment });
-        currentSegment = [];
-        currentType = p.type;
-        currentLayer = p.layer;
+    let currentType = '';
+    let currentLayer = -1;
+    let startIdx = -1;
+    
+    const addSegment = (start: number, end: number, type: string, layer: number) => {
+      if (end - start < 1) return;
+      const groupKey = type === 'infill' ? 'infill' : `perimeter_${layer % colors.length}`;
+      if (!groups[groupKey]) groups[groupKey] = [];
+      
+      const arr = groups[groupKey];
+      for (let i = start; i < end; i++) {
+        arr.push(points.x[i], points.y[i], points.z[i], points.x[i+1], points.y[i+1], points.z[i+1]);
       }
-      currentSegment.push(p);
+    };
+    
+    for (let i = 0; i < pointCount; i++) {
+      const layer = points.layer[i];
+      const isVisible = isolateLayer ? layer === maxVisibleLayer : layer <= maxVisibleLayer;
+      
+      if (!isVisible) {
+        if (startIdx !== -1) {
+          addSegment(startIdx, i - 1, currentType, currentLayer);
+          startIdx = -1;
+        }
+        continue;
+      }
+      
+      const type = points.type[i] === 0 ? 'perimeter' : 'infill';
+      
+      if (startIdx === -1) {
+        startIdx = i;
+        currentType = type;
+        currentLayer = layer;
+        continue;
+      }
+      
+      const typeChanged = type !== currentType || layer !== currentLayer;
+      const jumpZ = Math.abs(points.z[i] - points.z[i-1]) > 0.1 && type === 'infill';
+      const jumpXY = Math.sqrt(Math.pow(points.x[i] - points.x[i-1], 2) + Math.pow(points.y[i] - points.y[i-1], 2)) > 5.0;
+      
+      if (typeChanged || jumpZ || jumpXY) {
+        addSegment(startIdx, i - 1, currentType, currentLayer);
+        startIdx = i;
+        currentType = type;
+        currentLayer = layer;
+      }
     }
-    if (currentSegment.length > 1) segments.push({ type: currentType, layer: currentLayer, points: currentSegment });
     
-    const colors = [0xffff00, 0x00ff00, 0x00ffff, 0x1e90ff, 0xff00ff, 0xff4500]; // Rainbow palette for layers
+    if (startIdx !== -1) {
+      addSegment(startIdx, pointCount - 1, currentType, currentLayer);
+    }
     
-    return segments.map((seg, idx) => {
-      const positions = new Float32Array(seg.points.length * 3);
-      for (let i = 0; i < seg.points.length; i++) {
-        positions[i * 3] = seg.points[i].x;
-        positions[i * 3 + 1] = seg.points[i].y;
-        positions[i * 3 + 2] = seg.points[i].z;
-      }
+    const result = [];
+    for (const key of Object.keys(groups)) {
+      const arr = groups[key];
+      if (arr.length === 0) continue;
+      
+      const positions = new Float32Array(arr);
       const geom = new THREE.BufferGeometry();
       geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       
-      const isPerimeter = seg.type === 'perimeter';
-      const layerColor = colors[seg.layer % colors.length];
+      let color = key === 'infill' ? 0xff8c00 : colors[parseInt(key.split('_')[1])];
       
-      // Perimeters use rainbow layer colors, infill uses a solid single color (Orange)
-      const material = new THREE.LineBasicMaterial({ 
-        color: isPerimeter ? layerColor : 0xff8c00,
-        linewidth: 2
-      });
-      return <primitive key={idx} object={new THREE.Line(geom, material)} />;
-    });
-  }, [visiblePoints]);
+      const material = new THREE.LineBasicMaterial({ color: color });
+      result.push(<primitive key={key} object={new THREE.LineSegments(geom, material)} />);
+    }
+    
+    return result;
+  }, [points, pointCount, maxVisibleLayer, isolateLayer]);
 
-  return <>{lines}</>;
+  return <>{lineGeometries}</>;
 }
 
 function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
@@ -143,6 +175,7 @@ function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
 function App() {
   const [hasEntered, setHasEntered] = useState(false);
   const [infillDensity, setInfillDensity] = useState(20);
+  const [infillPattern, setInfillPattern] = useState("lines");
   const [layerHeight, setLayerHeight] = useState(0.2);
   const [waveAmplitude, setWaveAmplitude] = useState(0.0);
   const [waveFrequency, setWaveFrequency] = useState(0.1);
@@ -162,7 +195,7 @@ function App() {
   
   const [isSlicing, setIsSlicing] = useState(false);
   const [isResettingCamera, setIsResettingCamera] = useState(false);
-  const [toolpathPoints, setToolpathPoints] = useState<any[]>([]);
+  const [toolpathPoints, setToolpathPoints] = useState<any>(null);
   const [gcodeData, setGcodeData] = useState<string | null>(null);
   const [previewProgress, setPreviewProgress] = useState(100);
   const [maxVisibleLayer, setMaxVisibleLayer] = useState(9999);
@@ -216,7 +249,7 @@ function App() {
     setIsSlicing(true);
     setStatus('UPLOADING_STL...');
     setUploadProgress(0);
-    setToolpathPoints([]);
+    setToolpathPoints(null);
     setGcodeData(null);
     setSegmentInfo(null);
     setPreviewProgress(100);
@@ -230,6 +263,7 @@ function App() {
       formData.append("wave_amplitude", waveAmplitude.toString());
       formData.append("wave_frequency", waveFrequency.toString());
       formData.append("infill_density", infillDensity.toString());
+      formData.append("infill_pattern", infillPattern);
       formData.append("auto_segment", autoSegment ? "true" : "false");
       formData.append("model_scale", modelScale.toString());
       formData.append("rot_x", rotX.toString());
@@ -385,6 +419,19 @@ function App() {
             </div>
             
             <div className="input-row" style={{ marginTop: '10px' }}>
+              <label>INFILL PATTERN</label>
+              <select 
+                className="terminal-input"
+                value={infillPattern} 
+                onChange={e => setInfillPattern(e.target.value)}
+                style={{ width: '80px' }}
+              >
+                <option value="lines">LINES</option>
+                <option value="grid">GRID</option>
+              </select>
+            </div>
+            
+            <div className="input-row" style={{ marginTop: '10px' }}>
               <label>LAYER HEIGHT (mm)</label>
               <input 
                 type="number" 
@@ -438,7 +485,7 @@ function App() {
               </div>
             )}
             
-            {toolpathPoints.length > 0 && (
+            {toolpathPoints && toolpathPoints.x && toolpathPoints.x.length > 0 && (
               <>
                 <div className="input-row" style={{ marginTop: '20px' }}>
                   <label>VISIBLE LAYER: {maxVisibleLayer} / {totalLayers}</label>
