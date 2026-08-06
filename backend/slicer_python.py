@@ -90,145 +90,104 @@ def load_stl(file_bytes):
     return centered_triangles, (min_x, min_y, min_z), (max_x, max_y, max_z)
 
 
-def build_bvh(triangles):
-    tri_indices = list(range(len(triangles)))
-    tri_bounds = []
-    
-    for i, tri in enumerate(triangles):
-        v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, _, _, _ = tri
-        bx_min = min(v0x, v1x, v2x)
-        by_min = min(v0y, v1y, v2y)
-        bz_min = min(v0z, v1z, v2z)
-        bx_max = max(v0x, v1x, v2x)
-        by_max = max(v0y, v1y, v2y)
-        bz_max = max(v0z, v1z, v2z)
-        tri_bounds.append((bx_min, by_min, bz_min, bx_max, by_max, bz_max))
+def get_z_slice_segments(triangles, z):
+    segments = []
+    for tri in triangles:
+        v = [(tri[0], tri[1], tri[2]), (tri[3], tri[4], tri[5]), (tri[6], tri[7], tri[8])]
+        above = [pt for pt in v if pt[2] >= z]
+        below = [pt for pt in v if pt[2] < z]
         
-    bvh = [BVHNode()]
-    bvh[0].first = 0
-    bvh[0].count = len(triangles)
-    
-    def update_bounds(node_idx):
-        node = bvh[node_idx]
-        for i in range(node.first, node.first + node.count):
-            idx = tri_indices[i]
-            b = tri_bounds[idx]
-            node.min_x = min(node.min_x, b[0])
-            node.min_y = min(node.min_y, b[1])
-            node.min_z = min(node.min_z, b[2])
-            node.max_x = max(node.max_x, b[3])
-            node.max_y = max(node.max_y, b[4])
-            node.max_z = max(node.max_z, b[5])
-
-    def split_node(node_idx):
-        update_bounds(node_idx)
-        node = bvh[node_idx]
-        if node.count <= 4:
-            return
+        if len(above) == 0 or len(below) == 0:
+            continue
             
-        ex = node.max_x - node.min_x
-        ey = node.max_y - node.min_y
-        ez = node.max_z - node.min_z
-        
-        axis = 0
-        if ey > ex: axis = 1
-        if ez > ey and ez > ex: axis = 2
-        
-        split_pos = node.min_x + ex / 2.0
-        if axis == 1: split_pos = node.min_y + ey / 2.0
-        if axis == 2: split_pos = node.min_z + ez / 2.0
-        
-        i = node.first
-        j = i + node.count - 1
-        
-        while i <= j:
-            idx = tri_indices[i]
-            b = tri_bounds[idx]
-            center = (b[axis] + b[axis + 3]) / 2.0
-            if center < split_pos:
-                i += 1
-            else:
-                tri_indices[i], tri_indices[j] = tri_indices[j], tri_indices[i]
-                j -= 1
+        pts = []
+        for a in above:
+            for b in below:
+                t = (z - b[2]) / (a[2] - b[2]) if a[2] != b[2] else 0
+                ix = b[0] + t * (a[0] - b[0])
+                iy = b[1] + t * (a[1] - b[1])
+                pts.append((ix, iy))
                 
-        left_count = i - node.first
-        if left_count == 0 or left_count == node.count:
-            # Fallback to object median
-            left_count = node.count // 2
-            sub_indices = tri_indices[node.first : node.first + node.count]
-            sub_indices.sort(key=lambda idx: (tri_bounds[idx][axis] + tri_bounds[idx][axis + 3]) / 2.0)
-            tri_indices[node.first : node.first + node.count] = sub_indices
-            i = node.first + left_count
+        if len(pts) >= 2:
+            segments.append((pts[0], pts[1], tri[9], tri[10], tri[11]))
+    return segments
+
+def chain_segments(segments):
+    adj = {}
+    for i, seg in enumerate(segments):
+        p1 = (round(seg[0][0], 3), round(seg[0][1], 3))
+        p2 = (round(seg[1][0], 3), round(seg[1][1], 3))
+        if p1 not in adj: adj[p1] = []
+        if p2 not in adj: adj[p2] = []
+        adj[p1].append((p2, i))
+        adj[p2].append((p1, i))
+        
+    visited_seg = set()
+    loops = []
+    
+    for start_p, edges in adj.items():
+        for edge in edges:
+            if edge[1] in visited_seg: continue
             
-        node_first = node.first
-        node_count = node.count
-        
-        left_node_idx = len(bvh)
-        bvh.append(BVHNode())
-        right_node_idx = len(bvh)
-        bvh.append(BVHNode())
-        
-        # Need to re-fetch node because append might reallocate (though not in Python, but good practice)
-        bvh[node_idx].left = left_node_idx
-        bvh[node_idx].right = right_node_idx
-        bvh[node_idx].count = 0
-        
-        bvh[left_node_idx].first = node_first
-        bvh[left_node_idx].count = left_count
-        bvh[right_node_idx].first = i
-        bvh[right_node_idx].count = node_count - left_count
-        
-        split_node(left_node_idx)
-        split_node(right_node_idx)
+            loop = []
+            curr_p = start_p
+            next_p = edge[0]
+            seg_idx = edge[1]
+            
+            loop.append((curr_p, segments[seg_idx]))
+            
+            while True:
+                visited_seg.add(seg_idx)
+                curr_p = next_p
+                neighbors = adj.get(curr_p, [])
+                next_edge = None
+                for n in neighbors:
+                    if n[1] not in visited_seg:
+                        next_edge = n
+                        break
+                if not next_edge:
+                    break
+                next_p = next_edge[0]
+                seg_idx = next_edge[1]
+                loop.append((curr_p, segments[seg_idx]))
+                
+            loops.append(loop)
+            
+    return loops
 
-    split_node(0)
-    return bvh, tri_indices
+def generate_infill(segments, min_x, max_x, min_y, max_y, line_width):
+    infill_lines = []
+    y = min_y
+    idx = 0
+    while y <= max_y:
+        intersects = []
+        for seg in segments:
+            p1, p2 = seg[0], seg[1]
+            if (p1[1] <= y < p2[1]) or (p2[1] <= y < p1[1]):
+                t = (y - p1[1]) / (p2[1] - p1[1])
+                ix = p1[0] + t * (p2[0] - p1[0])
+                intersects.append(ix)
+        intersects.sort()
+        
+        line_pts = []
+        for i in range(0, len(intersects)-1, 2):
+            x0 = intersects[i]
+            x1 = intersects[i+1]
+            if idx % 2 != 0:
+                line_pts.append((x1, y))
+                line_pts.append((x0, y))
+            else:
+                line_pts.append((x0, y))
+                line_pts.append((x1, y))
+                
+        if line_pts:
+            infill_lines.extend(line_pts)
+            
+        y += line_width
+        idx += 1
+    return infill_lines
 
-def ray_triangle_intersect(ox, oy, oz, v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z):
-    # Dir is always [0, 0, -1]
-    e1x = v1x - v0x
-    e1y = v1y - v0y
-    e1z = v1z - v0z
-    
-    e2x = v2x - v0x
-    e2y = v2y - v0y
-    e2z = v2z - v0z
-    
-    # pvec = dir.cross(e2)
-    # dir = (0, 0, -1) -> pvec = (y*e2z - z*e2y, z*e2x - x*e2z, x*e2y - y*e2x)
-    # dir = (0,0,-1) -> pvec = (0 - (-1)*e2y, (-1)*e2x - 0, 0)
-    pvecx = e2y
-    pvecy = -e2x
-    pvecz = 0.0
-    
-    det = e1x * pvecx + e1y * pvecy + e1z * pvecz
-    if -1e-8 < det < 1e-8:
-        return False, 0.0
-        
-    inv_det = 1.0 / det
-    tvecx = ox - v0x
-    tvecy = oy - v0y
-    tvecz = oz - v0z
-    
-    u = (tvecx * pvecx + tvecy * pvecy + tvecz * pvecz) * inv_det
-    if u < 0.0 or u > 1.0:
-        return False, 0.0
-        
-    qvecx = tvecy * e1z - tvecz * e1y
-    qvecy = tvecz * e1x - tvecx * e1z
-    qvecz = tvecx * e1y - tvecy * e1x
-    
-    # v = dir.dot(qvec) -> (0,0,-1).dot(qvec) = -qvecz
-    v = -qvecz * inv_det
-    if v < 0.0 or u + v > 1.0:
-        return False, 0.0
-        
-    t = (e2x * qvecx + e2y * qvecy + e2z * qvecz) * inv_det
-    if t > 1e-8:
-        return True, t
-    return False, 0.0
-
-def slice_mesh(file_bytes, line_width, y_step, bed_center_z):
+def slice_mesh(file_bytes, layer_height, bed_center_z):
     triangles, min_b, max_b = load_stl(file_bytes)
     min_x, min_y, min_z = min_b
     max_x, max_y, max_z = max_b
@@ -236,61 +195,46 @@ def slice_mesh(file_bytes, line_width, y_step, bed_center_z):
     if (max_x - min_x) > 500.0 or (max_y - min_y) > 500.0:
         return {"error": "Model is too large (>500mm). Scale down your STL to millimeters to prevent memory crash."}
         
-    bvh, tri_indices = build_bvh(triangles)
+    line_width = 0.4 # Default nozzle line width
     
     path = []
-    z_start = max_z + 10.0
-    line_idx = 0
+    layer_idx = 0
     
-    x = min_x
-    while x <= max_x:
-        y_pts = []
-        y = min_y
-        while y <= max_y:
-            y_pts.append(y)
-            y += y_step
+    z = min_z + layer_height
+    while z <= max_z:
+        segments = get_z_slice_segments(triangles, z)
+        if not segments:
+            z += layer_height
+            layer_idx += 1
+            continue
             
-        if line_idx % 2 != 0:
-            y_pts.reverse()
-            
-        for y in y_pts:
-            max_hit_z = -1e9
-            hit = False
-            best_nx, best_ny, best_nz = 0, 0, 0
-            
-            # Non-recursive intersect
-            stack = [0]
-            while stack:
-                node_idx = stack.pop()
-                node = bvh[node_idx]
+        # 1. Perimeters (5-axis tilted)
+        loops = chain_segments(segments)
+        for loop in loops:
+            for pt, seg in loop:
+                nx, ny, nz = seg[2], seg[3], seg[4]
+                # Force normal to point outwards horizontally somewhat, but keep true 3D normal for tilt
+                if nz < 0: nz = -nz # Prevent nozzle from going upside down
+                # Avoid completely flat normals to prevent 90 deg violent tilts if not needed
+                if nz < 0.1: nz = 0.1 
+                length = math.sqrt(nx*nx + ny*ny + nz*nz)
+                nx, ny, nz = nx/length, ny/length, nz/length
+                path.append((pt[0], pt[1], z, nx, ny, nz, layer_idx, "perimeter"))
                 
-                if x >= node.min_x and x <= node.max_x and y >= node.min_y and y <= node.max_y:
-                    if node.count > 0:
-                        for i in range(node.first, node.first + node.count):
-                            tri = triangles[tri_indices[i]]
-                            is_hit, t = ray_triangle_intersect(x, y, z_start, tri[0], tri[1], tri[2], tri[3], tri[4], tri[5], tri[6], tri[7], tri[8])
-                            if is_hit:
-                                hit_z = z_start - t
-                                if hit_z > max_hit_z:
-                                    max_hit_z = hit_z
-                                    best_nx, best_ny, best_nz = tri[9], tri[10], tri[11]
-                                    hit = True
-                    else:
-                        stack.append(node.right)
-                        stack.append(node.left)
-                        
-            if hit:
-                path.append((x, y, max_hit_z, best_nx, best_ny, best_nz))
-        
-        line_idx += 1
-        x += line_width
+        # 2. Infill (Straight down)
+        infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, line_width)
+        for pt in infill_pts:
+            path.append((pt[0], pt[1], z, 0.0, 0.0, 1.0, layer_idx, "infill"))
+            
+        z += layer_height
+        layer_idx += 1
         
     if not path:
         return {"error": "No path generated"}
         
     # Generate GCode
     gcode = []
-    gcode.append("; Open5x Conformal Slicer Output (Python Engine)")
+    gcode.append("; Open5x Volumetric Slicer Output (Python Engine)")
     gcode.append("G21 ; Set units to millimeters")
     gcode.append("G90 ; Absolute positioning")
     gcode.append("M82 ; Absolute extrusion mode")
@@ -309,8 +253,8 @@ def slice_mesh(file_bytes, line_width, y_step, bed_center_z):
     points_json = []
     
     for pt in path:
-        px, py, pz, nx, ny, nz = pt
-        points_json.append({"x": round(px, 2), "y": round(py, 2), "z": round(pz, 2)})
+        px, py, pz, nx, ny, nz, layer, ptype = pt
+        points_json.append({"x": round(px, 2), "y": round(py, 2), "z": round(pz, 2), "layer": layer, "type": ptype})
         
         v_rad = math.atan2(nx, ny)
         xy_mag = math.sqrt(nx*nx + ny*ny)
@@ -351,6 +295,15 @@ def slice_mesh(file_bytes, line_width, y_step, bed_center_z):
             
         dist_part = math.sqrt((px - last_px)**2 + (py - last_py)**2 + (pz - last_pz)**2)
         dist_mach = math.sqrt((mx - last_mx)**2 + (my - last_my)**2 + (mz - last_mz)**2 + (mu - last_mu)**2 + (mv - last_mv)**2)
+        
+        # If moving to a new layer or jumping across infill, retract and move
+        if dist_part > 5.0:
+            gcode.append(f"G1 E{current_e - 2.0:.3f} F2400 ; Retract")
+            gcode.append(f"G0 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} F3000")
+            gcode.append(f"G1 E{current_e:.3f} F2400 ; Unretract")
+            last_px, last_py, last_pz = px, py, pz
+            last_mx, last_my, last_mz, last_mu, last_mv = mx, my, mz, mu, mv
+            continue
         
         current_e += dist_part * e_multiplier
         feedrate = base_feedrate * (dist_mach / dist_part) if dist_part > 0 else base_feedrate

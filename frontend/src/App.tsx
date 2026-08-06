@@ -15,31 +15,53 @@ function StlModel({ geometry }: { geometry: THREE.BufferGeometry | null }) {
         color="#777777" 
         roughness={0.5}
         metalness={0.2}
+        transparent={true}
+        opacity={0.3}
       />
     </mesh>
   );
 }
 
-function Toolpath({ points, progress }: { points: {x: number, y: number, z: number}[], progress: number }) {
+function Toolpath({ points, progress, maxVisibleLayer }: { points: any[], progress: number, maxVisibleLayer: number }) {
   if (!points || points.length < 2) return null;
   
   const pointCount = Math.max(2, Math.floor(points.length * (progress / 100)));
-  const visiblePoints = points.slice(0, pointCount);
+  const visiblePoints = points.slice(0, pointCount).filter(p => p.layer <= maxVisibleLayer);
   
-  const line = useMemo(() => {
-    const positions = new Float32Array(visiblePoints.length * 3);
+  const lines = useMemo(() => {
+    // Group points into continuous segments to avoid drawing lines across retracts
+    const segments = [];
+    let currentSegment: any[] = [];
+    let currentType = visiblePoints[0]?.type || 'perimeter';
+    
     for (let i = 0; i < visiblePoints.length; i++) {
-      positions[i * 3] = visiblePoints[i].x;
-      positions[i * 3 + 1] = visiblePoints[i].y;
-      positions[i * 3 + 2] = visiblePoints[i].z;
+      const p = visiblePoints[i];
+      if (p.type !== currentType || (i > 0 && Math.abs(p.z - visiblePoints[i-1].z) > 0.1) || (i > 0 && Math.sqrt(Math.pow(p.x - visiblePoints[i-1].x, 2) + Math.pow(p.y - visiblePoints[i-1].y, 2)) > 5.0)) {
+        if (currentSegment.length > 1) segments.push({ type: currentType, points: currentSegment });
+        currentSegment = [];
+        currentType = p.type;
+      }
+      currentSegment.push(p);
     }
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const material = new THREE.LineBasicMaterial({ color: 0x39ff14 });
-    return new THREE.Line(geom, material);
+    if (currentSegment.length > 1) segments.push({ type: currentType, points: currentSegment });
+    
+    return segments.map((seg, idx) => {
+      const positions = new Float32Array(seg.points.length * 3);
+      for (let i = 0; i < seg.points.length; i++) {
+        positions[i * 3] = seg.points[i].x;
+        positions[i * 3 + 1] = seg.points[i].y;
+        positions[i * 3 + 2] = seg.points[i].z;
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const material = new THREE.LineBasicMaterial({ 
+        color: seg.type === 'perimeter' ? 0x39ff14 : 0x1e90ff 
+      });
+      return <primitive key={idx} object={new THREE.Line(geom, material)} />;
+    });
   }, [visiblePoints]);
 
-  return <primitive object={line} />;
+  return <>{lines}</>;
 }
 
 function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
@@ -74,16 +96,17 @@ function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
 
 function App() {
   const [hasEntered, setHasEntered] = useState(false);
-  const [infill, setInfill] = useState(20);
-  const [resolution, setResolution] = useState(1.0);
+  const [layerHeight, setLayerHeight] = useState(0.2);
   const [file, setFile] = useState<File | null>(null);
   
   const [stlGeometry, setStlGeometry] = useState<THREE.BufferGeometry | null>(null);
   
   const [isSlicing, setIsSlicing] = useState(false);
-  const [toolpathPoints, setToolpathPoints] = useState([]);
+  const [toolpathPoints, setToolpathPoints] = useState<any[]>([]);
   const [gcodeData, setGcodeData] = useState<string | null>(null);
   const [previewProgress, setPreviewProgress] = useState(100);
+  const [maxVisibleLayer, setMaxVisibleLayer] = useState(9999);
+  const [totalLayers, setTotalLayers] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [status, setStatus] = useState<string>('SYSTEM_READY');
   
@@ -95,7 +118,6 @@ function App() {
       setFile(selectedFile);
       setStatus(`LOADED: ${selectedFile.name}`);
       
-      // Parse the STL file to display the model instantly
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target && event.target.result) {
@@ -103,7 +125,6 @@ function App() {
             const loader = new STLLoader();
             const geometry = loader.parse(event.target.result as ArrayBuffer);
             
-            // Re-center geometry to match backend's bounding box centering
             geometry.computeBoundingBox();
             if (geometry.boundingBox) {
               const minB = geometry.boundingBox.min;
@@ -143,8 +164,7 @@ function App() {
       formData.append("file", file);
       formData.append("line_width", "0.4");
       formData.append("bed_center_z", "50.0");
-      formData.append("resolution", resolution.toString());
-      formData.append("infill", infill.toString());
+      formData.append("layer_height", layerHeight.toString());
       
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await axios.post(`${apiUrl}/slice_stl`, formData, {
@@ -169,19 +189,15 @@ function App() {
       const gcode = response.data.gcode;
       const points = response.data.toolpath_points;
       
+      if (points.length > 0) {
+        const maxLayer = Math.max(...points.map((p: any) => p.layer));
+        setTotalLayers(maxLayer);
+        setMaxVisibleLayer(maxLayer);
+      }
+      
       setToolpathPoints(points);
       setGcodeData(gcode);
       setStatus(`SUCCESS: GENERATED ${points.length} Pts`);
-      
-      const blob = new Blob([gcode], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${file.name.replace('.stl', '')}_open5x.gcode`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
       
     } catch (error: any) {
       console.error("Failed to slice:", error);
@@ -203,7 +219,7 @@ function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${file.name.replace('.stl', '')}_open5x.gcode`;
+    a.download = `${file.name.replace('.stl', '')}_open5x_volumetric.gcode`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -212,7 +228,6 @@ function App() {
 
   return (
     <div className="app-container">
-      {/* TOP BAR */}
       <header className="topbar">
         <div className="text-muted" style={{ fontWeight: 700 }}>
           &gt;_ OPEN5X_SLICER.EXE
@@ -223,49 +238,53 @@ function App() {
       </header>
 
       <div className="main-content">
-        {/* SIDEBAR */}
         <aside className="sidebar">
           <div className="accent-text" style={{ marginBottom: '10px' }}>
-            &gt; CONFIGURE SLICER
+            &gt; CONFIGURE VOLUMETRIC SLICER
           </div>
           
           <div className="controls-container">
             <div className="input-row">
-              <label>INFILL DENSITY (%)</label>
-              <input 
-                type="number" 
-                className="terminal-input"
-                step="5" 
-                min="0"
-                max="100"
-                value={infill} 
-                onChange={e => setInfill(parseInt(e.target.value))} 
-              />
-            </div>
-            
-            <div className="input-row">
-              <label>Y-STEP RESOLUTION (mm)</label>
+              <label>LAYER HEIGHT (mm)</label>
               <input 
                 type="number" 
                 className="terminal-input"
                 step="0.1" 
-                value={resolution} 
-                onChange={e => setResolution(parseFloat(e.target.value))} 
+                min="0.1"
+                value={layerHeight} 
+                onChange={e => setLayerHeight(parseFloat(e.target.value))} 
               />
             </div>
             
             {toolpathPoints.length > 0 && (
-              <div className="input-row" style={{ marginTop: '20px' }}>
-                <label>PREVIEW PROGRESS: {previewProgress}%</label>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="100" 
-                  value={previewProgress} 
-                  onChange={e => setPreviewProgress(parseInt(e.target.value))}
-                  className="terminal-slider"
-                />
-              </div>
+              <>
+                <div className="input-row" style={{ marginTop: '20px' }}>
+                  <label>MAX VISIBLE LAYER: {maxVisibleLayer} / {totalLayers}</label>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max={totalLayers} 
+                    value={maxVisibleLayer} 
+                    onChange={e => setMaxVisibleLayer(parseInt(e.target.value))}
+                    className="terminal-slider"
+                  />
+                </div>
+                <div className="input-row" style={{ marginTop: '10px' }}>
+                  <label>PRINT PROGRESS: {previewProgress}%</label>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="100" 
+                    value={previewProgress} 
+                    onChange={e => setPreviewProgress(parseInt(e.target.value))}
+                    className="terminal-slider"
+                  />
+                </div>
+                <div style={{ marginTop: '10px', fontSize: '10px', display: 'flex', gap: '10px' }}>
+                  <div style={{ color: '#39ff14' }}>■ 5-Axis Perimeter</div>
+                  <div style={{ color: '#1e90ff' }}>■ 3-Axis Infill</div>
+                </div>
+              </>
             )}
           </div>
           
@@ -290,7 +309,7 @@ function App() {
             )}
             
             <button className="btn-primary" onClick={handleSlice} disabled={isSlicing || !file}>
-              {isSlicing ? (uploadProgress < 100 ? `Uploading ${uploadProgress}%...` : 'Executing C++ Engine...') : 'Initiate Slicing'}
+              {isSlicing ? (uploadProgress < 100 ? `Uploading ${uploadProgress}%...` : 'Executing Python Engine...') : 'Initiate Slicing'}
             </button>
             
             {gcodeData && (
@@ -320,27 +339,21 @@ function App() {
           </div>
         </aside>
 
-        {/* MAIN CANVAS */}
         <main className="canvas-area">
           <Canvas shadows camera={{ position: [0, -80, 15], up: [0, 0, 1], fov: 50 }}>
-            {/* 3-Point Lighting Setup */}
             <ambientLight intensity={0.3} />
             <directionalLight position={[20, 20, 30]} intensity={1.5} castShadow shadow-mapSize={[1024, 1024]} />
             <directionalLight position={[-20, -20, 10]} intensity={0.5} />
             
             <Grid infiniteGrid fadeDistance={100} sectionColor="#1f6b1f" cellColor="transparent" />
             
-            {/* Shadow Catching Floor at Z=0 */}
             <mesh position={[0, 0, -0.1]} receiveShadow>
               <planeGeometry args={[200, 200]} />
               <shadowMaterial opacity={0.4} />
             </mesh>
             
-            {/* Render uploaded STL Model */}
             <StlModel geometry={stlGeometry} />
-            
-            {/* Render Toolpath with progress slider */}
-            <Toolpath points={toolpathPoints} progress={previewProgress} />
+            <Toolpath points={toolpathPoints} progress={previewProgress} maxVisibleLayer={maxVisibleLayer} />
             
             <OrbitControls makeDefault />
           </Canvas>
