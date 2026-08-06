@@ -90,69 +90,69 @@ def load_stl(file_bytes):
     return centered_triangles, (min_x, min_y, min_z), (max_x, max_y, max_z)
 
 
-def get_z_slice_segments(triangles, z):
+def get_z_slice_segments(active_triangles, z):
     segments = []
-    for tri in triangles:
-        v = [(tri[0], tri[1], tri[2]), (tri[3], tri[4], tri[5]), (tri[6], tri[7], tri[8])]
-        above = [pt for pt in v if pt[2] >= z]
-        below = [pt for pt in v if pt[2] < z]
-        
-        if len(above) == 0 or len(below) == 0:
-            continue
-            
+    for tri in active_triangles:
         pts = []
-        for a in above:
-            for b in below:
-                t = (z - b[2]) / (a[2] - b[2]) if a[2] != b[2] else 0
-                ix = b[0] + t * (a[0] - b[0])
-                iy = b[1] + t * (a[1] - b[1])
-                pts.append((ix, iy))
-                
+        for b_idx in (4, 7, 10):
+            bz = tri[b_idx]
+            if bz < z:
+                for a_idx in (4, 7, 10):
+                    az = tri[a_idx]
+                    if az >= z:
+                        dz = az - bz
+                        if dz == 0: continue
+                        t = (z - bz) / dz
+                        ix = tri[b_idx-2] + t * (tri[a_idx-2] - tri[b_idx-2])
+                        iy = tri[b_idx-1] + t * (tri[a_idx-1] - tri[b_idx-1])
+                        pts.append((ix, iy))
         if len(pts) >= 2:
-            segments.append((pts[0], pts[1], tri[9], tri[10], tri[11]))
+            segments.append((pts[0], pts[1], tri[11], tri[12], tri[13]))
     return segments
 
 def chain_segments(segments):
-    adj = {}
-    for i, seg in enumerate(segments):
-        p1 = (round(seg[0][0], 3), round(seg[0][1], 3))
-        p2 = (round(seg[1][0], 3), round(seg[1][1], 3))
-        if p1 not in adj: adj[p1] = []
-        if p2 not in adj: adj[p2] = []
-        adj[p1].append((p2, i))
-        adj[p2].append((p1, i))
-        
-    visited_seg = set()
     loops = []
+    pt_map = {}
     
-    for start_p, edges in adj.items():
-        for edge in edges:
-            if edge[1] in visited_seg: continue
-            
-            loop = []
-            curr_p = start_p
-            next_p = edge[0]
-            seg_idx = edge[1]
-            
-            loop.append((curr_p, segments[seg_idx]))
-            
-            while True:
-                visited_seg.add(seg_idx)
-                curr_p = next_p
-                neighbors = adj.get(curr_p, [])
-                next_edge = None
-                for n in neighbors:
-                    if n[1] not in visited_seg:
-                        next_edge = n
+    def get_key(pt):
+        return (round(pt[0], 3), round(pt[1], 3))
+        
+    for i, seg in enumerate(segments):
+        k0 = get_key(seg[0])
+        k1 = get_key(seg[1])
+        if k0 not in pt_map: pt_map[k0] = []
+        if k1 not in pt_map: pt_map[k1] = []
+        pt_map[k0].append(i)
+        pt_map[k1].append(i)
+        
+    used = set()
+    for start_idx in range(len(segments)):
+        if start_idx in used: continue
+        
+        current_loop = [segments[start_idx]]
+        used.add(start_idx)
+        last_k = get_key(segments[start_idx][1])
+        
+        while True:
+            found = False
+            if last_k in pt_map:
+                for next_idx in pt_map[last_k]:
+                    if next_idx not in used:
+                        seg = segments[next_idx]
+                        used.add(next_idx)
+                        k0 = get_key(seg[0])
+                        k1 = get_key(seg[1])
+                        
+                        if k0 == last_k:
+                            current_loop.append(seg)
+                            last_k = k1
+                        else:
+                            current_loop.append((seg[1], seg[0], seg[2], seg[3], seg[4]))
+                            last_k = k0
+                        found = True
                         break
-                if not next_edge:
-                    break
-                next_p = next_edge[0]
-                seg_idx = next_edge[1]
-                loop.append((curr_p, segments[seg_idx]))
-                
-            loops.append(loop)
-            
+            if not found: break
+        loops.append(current_loop)
     return loops
 
 def generate_infill(segments, min_x, max_x, min_y, max_y, line_width):
@@ -213,7 +213,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         dist_min_z = min(dist_min_z, dv0z, dv1z, dv2z)
         dist_max_z = max(dist_max_z, dv0z, dv1z, dv2z)
         
-        distorted_triangles.append((v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
+        distorted_triangles.append((min(dv0z, dv1z, dv2z), max(dv0z, dv1z, dv2z), v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
 
     min_x, min_y, min_z = min_b
     max_x, max_y, max_z = max_b
@@ -232,7 +232,8 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     
     z = dist_min_z + layer_height
     while z <= dist_max_z:
-        segments = get_z_slice_segments(distorted_triangles, z)
+        active_triangles = [t for t in distorted_triangles if t[0] <= z and t[1] >= z]
+        segments = get_z_slice_segments(active_triangles, z)
         if not segments:
             z += layer_height
             layer_idx += 1
