@@ -414,12 +414,12 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             for seg in loop:
                 resampled = resample_pts(seg[0], seg[1])
                 for pt in resampled[:-1]:
-                    true_z = undistort_z(pt[0], pt[1], z)
+                    true_z = distort_z(pt[0], pt[1], z)
                     nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
                     path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
             if loop:
                 last_pt = loop[-1][1]
-                true_z = undistort_z(last_pt[0], last_pt[1], z)
+                true_z = distort_z(last_pt[0], last_pt[1], z)
                 nx, ny, nz = get_wavy_normal(last_pt[0], last_pt[1], true_z)
                 path.append((last_pt[0], last_pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
                 
@@ -429,7 +429,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             p1, p2 = infill_pts[i], infill_pts[i+1]
             resampled = resample_pts(p1, p2)
             for pt in resampled:
-                true_z = undistort_z(pt[0], pt[1], z)
+                true_z = distort_z(pt[0], pt[1], z)
                 nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
                 path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "infill"))
             
@@ -446,6 +446,10 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         tilted_triangles = []
         tilted_min_z = 1e9
         tilted_max_z = -1e9
+        tilted_min_x = 1e9
+        tilted_max_x = -1e9
+        tilted_min_y = 1e9
+        tilted_max_y = -1e9
         
         def rotate_pt(px, py, pz):
             dy = py
@@ -472,6 +476,11 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             t_max = max(rv0[2], rv1[2], rv2[2])
             tilted_min_z = min(tilted_min_z, t_min)
             tilted_max_z = max(tilted_max_z, t_max)
+            
+            tilted_min_x = min(tilted_min_x, rv0[0], rv1[0], rv2[0])
+            tilted_max_x = max(tilted_max_x, rv0[0], rv1[0], rv2[0])
+            tilted_min_y = min(tilted_min_y, rv0[1], rv1[1], rv2[1])
+            tilted_max_y = max(tilted_max_y, rv0[1], rv1[1], rv2[1])
             
             # Rotate normal
             rnx = t[11]
@@ -508,21 +517,24 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     resampled = resample_pts(seg[0], seg[1])
                     for pt in resampled[:-1]:
                         orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
-                        true_z = undistort_z(orig_x, orig_y, orig_z)
+                        if orig_z < calc_z_cutoff: continue
+                        true_z = distort_z(orig_x, orig_y, orig_z)
                         path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
                 if loop:
                     last_pt = loop[-1][1]
                     orig_x, orig_y, orig_z = inverse_rotate_pt(last_pt[0], last_pt[1], z)
-                    true_z = undistort_z(orig_x, orig_y, orig_z)
-                    path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
+                    if orig_z >= calc_z_cutoff:
+                        true_z = distort_z(orig_x, orig_y, orig_z)
+                        path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
                     
-            infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
+            infill_pts = generate_infill(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, infill_spacing, infill_pattern, layer_idx)
             for i in range(0, len(infill_pts), 2):
                 p1, p2 = infill_pts[i], infill_pts[i+1]
                 resampled = resample_pts(p1, p2)
                 for pt in resampled:
                     orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
-                    true_z = undistort_z(orig_x, orig_y, orig_z)
+                    if orig_z < calc_z_cutoff: continue
+                    true_z = distort_z(orig_x, orig_y, orig_z)
                     path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill"))
                 
             z += layer_height
