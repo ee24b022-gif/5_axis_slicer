@@ -8,6 +8,8 @@ import os
 import json
 import uuid
 import subprocess
+import asyncio
+from slicer_python import slice_mesh
 
 app = FastAPI(title="Open5x Slicer API")
 
@@ -20,20 +22,33 @@ app.add_middleware(
 )
 
 @app.post("/slice_stl")
-async def slice_stl(
-    file: UploadFile = File(...),
-    line_width: float = Form(...),
-    bed_center_z: float = Form(...),
-    layer_height: float = Form(0.2),
+async def slice_stl_endpoint(
+    file: UploadFile = File(...), 
+    layer_height: float = Form(0.2), 
+    bed_center_z: float = Form(100.0),
     wave_amplitude: float = Form(0.0),
     wave_frequency: float = Form(0.1),
-    infill_density: float = Form(20.0)
+    infill_density: float = Form(20.0),
+    z_cutoff: float = Form(1000.0),
+    segment_tilt: float = Form(0.0)
 ):
     try:
         contents = await file.read()
-        from slicer_python import slice_mesh
-        result = slice_mesh(contents, layer_height, bed_center_z, wave_amplitude, wave_frequency, infill_density)
+        loop = asyncio.get_running_loop()
         
+        # Run CPU-bound slicing in a thread pool
+        result = await loop.run_in_executor(
+            None, 
+            slice_mesh, 
+            contents, 
+            layer_height, 
+            bed_center_z,
+            wave_amplitude,
+            wave_frequency,
+            infill_density,
+            z_cutoff,
+            segment_tilt
+        )
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
             

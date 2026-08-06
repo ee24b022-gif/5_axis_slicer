@@ -188,7 +188,7 @@ def generate_infill(segments, min_x, max_x, min_y, max_y, line_width):
         
     return infill_lines
                 
-def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0):
+def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, z_cutoff=1e9, segment_tilt=0.0):
     original_triangles, min_b, max_b = load_stl(file_bytes)
     
     distorted_triangles = []
@@ -239,7 +239,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     layer_idx = 0
     
     z = dist_min_z + layer_height
-    while z <= dist_max_z:
+    while z <= min(dist_max_z, z_cutoff):
         active_triangles = [t for t in distorted_triangles if t[0] <= z and t[1] >= z]
         segments = get_z_slice_segments(active_triangles, z)
         if not segments:
@@ -265,6 +265,79 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             
         z += layer_height
         layer_idx += 1
+        
+    # 2. Overhang Segment Loop (Support-Free Tilted Slicing)
+    if dist_max_z > z_cutoff and segment_tilt != 0.0:
+        tilt_rad = segment_tilt * math.pi / 180.0
+        c = math.cos(tilt_rad)
+        s = math.sin(tilt_rad)
+        cz = z_cutoff
+        
+        tilted_triangles = []
+        tilted_min_z = 1e9
+        tilted_max_z = -1e9
+        
+        def rotate_pt(px, py, pz):
+            dy = py
+            dz = pz - cz
+            ny = dy * c - dz * s
+            nz = dy * s + dz * c
+            return px, ny, nz + cz
+            
+        def inverse_rotate_pt(px, py, pz):
+            dy = py
+            dz = pz - cz
+            ny = dy * c + dz * s
+            nz = -dy * s + dz * c
+            return px, ny, nz + cz
+            
+        for t in distorted_triangles:
+            if t[1] < z_cutoff: continue # Skip triangles completely below cutoff
+            
+            rv0 = rotate_pt(t[2], t[3], t[4])
+            rv1 = rotate_pt(t[5], t[6], t[7])
+            rv2 = rotate_pt(t[8], t[9], t[10])
+            
+            t_min = min(rv0[2], rv1[2], rv2[2])
+            t_max = max(rv0[2], rv1[2], rv2[2])
+            tilted_min_z = min(tilted_min_z, t_min)
+            tilted_max_z = max(tilted_max_z, t_max)
+            
+            # Rotate normal
+            rnx = t[11]
+            rny = t[12] * c - t[13] * s
+            rnz = t[12] * s + t[13] * c
+            tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], rnx, rny, rnz))
+            
+        tilt_nx = 0.0
+        tilt_ny = s
+        tilt_nz = c
+        
+        z = max(tilted_min_z, z_cutoff) + layer_height
+        while z <= tilted_max_z:
+            active_triangles = [t for t in tilted_triangles if t[0] <= z and t[1] >= z]
+            segments = get_z_slice_segments(active_triangles, z)
+            if not segments:
+                z += layer_height
+                layer_idx += 1
+                continue
+                
+            loops = chain_segments(segments)
+            for loop in loops:
+                for seg in loop:
+                    pt = seg[0]
+                    orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
+                    true_z = undistort_z(orig_x, orig_y, orig_z)
+                    path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
+                    
+            infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing)
+            for pt in infill_pts:
+                orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
+                true_z = undistort_z(orig_x, orig_y, orig_z)
+                path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill"))
+                
+            z += layer_height
+            layer_idx += 1
         
     if not path:
         return {"error": "No path generated"}

@@ -109,6 +109,8 @@ function App() {
   const [layerHeight, setLayerHeight] = useState(0.2);
   const [waveAmplitude, setWaveAmplitude] = useState(0.0);
   const [waveFrequency, setWaveFrequency] = useState(0.1);
+  const [zCutoff, setZCutoff] = useState(1000);
+  const [segmentTilt, setSegmentTilt] = useState(-45);
   const [isolateLayer, setIsolateLayer] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   
@@ -181,6 +183,8 @@ function App() {
       formData.append("wave_amplitude", waveAmplitude.toString());
       formData.append("wave_frequency", waveFrequency.toString());
       formData.append("infill_density", infillDensity.toString());
+      formData.append("z_cutoff", zCutoff.toString());
+      formData.append("segment_tilt", segmentTilt.toString());
       
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await axios.post(`${apiUrl}/slice_stl`, formData, {
@@ -306,6 +310,29 @@ function App() {
                 min="0"
                 value={waveFrequency} 
                 onChange={e => setWaveFrequency(parseFloat(e.target.value))} 
+              />
+            </div>
+            
+            <div className="input-row" style={{ marginTop: '20px', borderTop: '1px solid rgba(31,107,31,0.4)', paddingTop: '10px' }}>
+              <label style={{ color: '#39ff14' }}>Z-CUTOFF PLANE (mm)</label>
+              <input 
+                type="number" 
+                className="terminal-input"
+                step="5" 
+                min="0"
+                value={zCutoff} 
+                onChange={e => setZCutoff(parseFloat(e.target.value))} 
+              />
+            </div>
+            
+            <div className="input-row" style={{ marginTop: '10px' }}>
+              <label style={{ color: '#39ff14' }}>SEGMENT 2 TILT (deg)</label>
+              <input 
+                type="number" 
+                className="terminal-input"
+                step="5" 
+                value={segmentTilt} 
+                onChange={e => setSegmentTilt(parseFloat(e.target.value))} 
               />
             </div>
             
