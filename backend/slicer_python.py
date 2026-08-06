@@ -192,40 +192,67 @@ def chain_segments(segments):
         loops.append(current_loop)
     return loops
 
-def generate_infill(segments, min_x, max_x, min_y, max_y, line_width):
+def generate_infill(segments, min_x, max_x, min_y, max_y, line_width, pattern="lines", layer_idx=0):
     infill_lines = []
-    y = min_y
-    idx = 0
-    while y <= max_y:
-        intersects = []
-        for seg in segments:
-            p1, p2 = seg[0], seg[1]
-            if (p1[1] <= y < p2[1]) or (p2[1] <= y < p1[1]):
-                t = (y - p1[1]) / (p2[1] - p1[1])
-                ix = p1[0] + t * (p2[0] - p1[0])
-                intersects.append(ix)
-        intersects.sort()
-        
-        line_pts = []
-        for i in range(0, len(intersects)-1, 2):
-            x0 = intersects[i]
-            x1 = intersects[i+1]
-            if idx % 2 != 0:
-                line_pts.append((x1, y))
-                line_pts.append((x0, y))
-            else:
-                line_pts.append((x0, y))
-                line_pts.append((x1, y))
-                
-        if line_pts:
-            infill_lines.extend(line_pts)
+    
+    def generate_axis_infill(is_x_axis):
+        axis_lines = []
+        v_start = min_y if is_x_axis else min_x
+        v_end = max_y if is_x_axis else max_x
             
-        y += line_width
-        idx += 1
-        
+        v = v_start
+        idx = 0
+        while v <= v_end:
+            intersects = []
+            for seg in segments:
+                p1, p2 = seg[0], seg[1]
+                if is_x_axis:
+                    if (p1[1] <= v < p2[1]) or (p2[1] <= v < p1[1]):
+                        t = (v - p1[1]) / (p2[1] - p1[1])
+                        ix = p1[0] + t * (p2[0] - p1[0])
+                        intersects.append(ix)
+                else:
+                    if (p1[0] <= v < p2[0]) or (p2[0] <= v < p1[0]):
+                        t = (v - p1[0]) / (p2[0] - p1[0])
+                        iy = p1[1] + t * (p2[1] - p1[1])
+                        intersects.append(iy)
+            intersects.sort()
+            
+            line_pts = []
+            for i in range(0, len(intersects)-1, 2):
+                v0 = intersects[i]
+                v1 = intersects[i+1]
+                
+                if idx % 2 != 0:
+                    if is_x_axis:
+                        line_pts.extend([(v1, v), (v0, v)])
+                    else:
+                        line_pts.extend([(v, v1), (v, v0)])
+                else:
+                    if is_x_axis:
+                        line_pts.extend([(v0, v), (v1, v)])
+                    else:
+                        line_pts.extend([(v, v0), (v, v1)])
+                    
+            if line_pts:
+                axis_lines.extend(line_pts)
+                
+            v += line_width
+            idx += 1
+        return axis_lines
+
+    if pattern == "grid":
+        infill_lines.extend(generate_axis_infill(True))
+        infill_lines.extend(generate_axis_infill(False))
+    else:
+        if layer_idx % 2 == 0:
+            infill_lines.extend(generate_axis_infill(True))
+        else:
+            infill_lines.extend(generate_axis_infill(False))
+            
     return infill_lines
                 
-def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0):
+def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0, infill_pattern="lines"):
     original_triangles, min_b, max_b = load_stl(file_bytes, model_scale, rot_x, rot_y, rot_z, pos_x, pos_y)
     
     processed_triangles = []
@@ -323,7 +350,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 path.append((last_pt[0], last_pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
                 
         # 2. Infill (Straight down or wavy)
-        infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing)
+        infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
         for i in range(0, len(infill_pts), 2):
             p1, p2 = infill_pts[i], infill_pts[i+1]
             resampled = resample_pts(p1, p2)
@@ -405,7 +432,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     true_z = distort_z(orig_x, orig_y, orig_z)
                     path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
                     
-            infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing)
+            infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
             for i in range(0, len(infill_pts), 2):
                 p1, p2 = infill_pts[i], infill_pts[i+1]
                 resampled = resample_pts(p1, p2)

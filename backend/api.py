@@ -35,7 +35,8 @@ async def slice_stl_endpoint(
     rot_y: float = Form(0.0),
     rot_z: float = Form(0.0),
     pos_x: float = Form(0.0),
-    pos_y: float = Form(0.0)
+    pos_y: float = Form(0.0),
+    infill_pattern: str = Form("lines")
 ):
     try:
         contents = await file.read()
@@ -57,7 +58,8 @@ async def slice_stl_endpoint(
             rot_y,
             rot_z,
             pos_x,
-            pos_y
+            pos_y,
+            infill_pattern
         )
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
