@@ -612,8 +612,8 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         dist_part = math.sqrt((px - last_px)**2 + (py - last_py)**2 + (pz - last_pz)**2)
         dist_mach = math.sqrt((mx - last_mx)**2 + (my - last_my)**2 + (mz - last_mz)**2 + (mu - last_mu)**2 + (mv - last_mv)**2)
         
-        # If moving to a new layer or jumping across infill, retract and move
-        if dist_part > 5.0:
+        # If moving to a new layer, jumping across infill, or jumping across cutoff gaps, retract and move
+        if dist_part > 1.5:
             gcode.append(f"G1 E{current_e - 2.0:.3f} F2400 ; Retract")
             gcode.append(f"G0 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} F3000")
             gcode.append(f"G1 E{current_e:.3f} F2400 ; Unretract")
