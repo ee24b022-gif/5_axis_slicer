@@ -8,7 +8,7 @@ COPY backend/requirements.txt /app/backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
 COPY . /app/
-RUN cd backend && g++ -std=c++17 -O3 -o slicer_engine slicer.cpp && chmod +x slicer_engine
+RUN cd backend && g++ -std=c++17 -O2 -o slicer_engine slicer.cpp && chmod +x slicer_engine
 
 # Create dummy frontend dist to satisfy FastAPI StaticFiles mount
 RUN mkdir -p /app/frontend/dist && echo "<html><body>Frontend is served by Vercel</body></html>" > /app/frontend/dist/index.html
