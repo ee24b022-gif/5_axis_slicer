@@ -106,10 +106,13 @@ function Toolpath({ points, progress, maxVisibleLayer, isolateLayer }: { points:
       }
       
       const typeChanged = type !== currentType || layer !== currentLayer;
-      const jumpZ = Math.abs(points.z[i] - points.z[i-1]) > 0.1 && type === 'infill';
-      const jumpXY = Math.sqrt(Math.pow(points.x[i] - points.x[i-1], 2) + Math.pow(points.y[i] - points.y[i-1], 2)) > 5.0;
       
-      if (typeChanged || jumpZ || jumpXY) {
+      const dx = points.x[i] - points.x[i-1];
+      const dy = points.y[i] - points.y[i-1];
+      const dz = points.z[i] - points.z[i-1];
+      const jump3D = Math.sqrt(dx*dx + dy*dy + dz*dz) > 1.5;
+      
+      if (typeChanged || jump3D) {
         addSegment(startIdx, i - 1, currentType, currentLayer);
         startIdx = i;
         currentType = type;
