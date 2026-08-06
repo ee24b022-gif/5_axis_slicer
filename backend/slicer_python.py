@@ -12,7 +12,7 @@ class BVHNode:
         self.first = 0
         self.count = 0
 
-def load_stl(file_bytes):
+def load_stl(file_bytes, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0):
     if len(file_bytes) < 84:
         raise ValueError("Invalid STL file")
     
@@ -25,15 +25,13 @@ def load_stl(file_bytes):
         num_triangles = struct.unpack_from("<I", file_bytes, 80)[0]
         offset = 84
         for _ in range(num_triangles):
-            if offset + 50 > len(file_bytes):
-                break
+            if offset + 50 > len(file_bytes): break
             data = struct.unpack_from("<12fH", file_bytes, offset)
             nx, ny, nz = data[0:3]
             v0x, v0y, v0z = data[3:6]
             v1x, v1y, v1z = data[6:9]
             v2x, v2y, v2z = data[9:12]
             
-            # Recalculate normal if invalid
             if nx*nx + ny*ny + nz*nz < 0.01:
                 e1x, e1y, e1z = v1x - v0x, v1y - v0y, v1z - v0z
                 e2x, e2y, e2z = v2x - v0x, v2y - v0y, v2z - v0z
@@ -41,8 +39,7 @@ def load_stl(file_bytes):
                 cy = e1z * e2x - e1x * e2z
                 cz = e1x * e2y - e1y * e2x
                 length = math.sqrt(cx*cx + cy*cy + cz*cz)
-                if length > 0:
-                    nx, ny, nz = cx/length, cy/length, cz/length
+                if length > 0: nx, ny, nz = cx/length, cy/length, cz/length
                     
             triangles.append((v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, nx, ny, nz))
             offset += 50
@@ -52,42 +49,82 @@ def load_stl(file_bytes):
     if not triangles:
         raise ValueError("No triangles found")
         
-    # Find bounds
     min_x = min_y = min_z = 1e9
     max_x = max_y = max_z = -1e9
-    
     for tri in triangles:
-        v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, _, _, _ = tri
-        min_x = min(min_x, v0x, v1x, v2x)
-        min_y = min(min_y, v0y, v1y, v2y)
-        min_z = min(min_z, v0z, v1z, v2z)
-        max_x = max(max_x, v0x, v1x, v2x)
-        max_y = max(max_y, v0y, v1y, v2y)
-        max_z = max(max_z, v0z, v1z, v2z)
+        min_x = min(min_x, tri[0], tri[3], tri[6])
+        min_y = min(min_y, tri[1], tri[4], tri[7])
+        min_z = min(min_z, tri[2], tri[5], tri[8])
+        max_x = max(max_x, tri[0], tri[3], tri[6])
+        max_y = max(max_y, tri[1], tri[4], tri[7])
+        max_z = max(max_z, tri[2], tri[5], tri[8])
         
-    # Center mesh
     cx = (min_x + max_x) / 2.0
     cy = (min_y + max_y) / 2.0
-    cz = min_z
+    cz = (min_z + max_z) / 2.0
     
-    centered_triangles = []
-    min_x = min_y = min_z = 1e9
-    max_x = max_y = max_z = -1e9
+    rad_x = rot_x * math.pi / 180.0
+    rad_y = rot_y * math.pi / 180.0
+    rad_z = rot_z * math.pi / 180.0
     
-    for tri in triangles:
-        v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, nx, ny, nz = tri
-        v0x -= cx; v0y -= cy; v0z -= cz
-        v1x -= cx; v1y -= cy; v1z -= cz
-        v2x -= cx; v2y -= cy; v2z -= cz
-        centered_triangles.append((v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, nx, ny, nz))
-        min_x = min(min_x, v0x, v1x, v2x)
-        min_y = min(min_y, v0y, v1y, v2y)
-        min_z = min(min_z, v0z, v1z, v2z)
-        max_x = max(max_x, v0x, v1x, v2x)
-        max_y = max(max_y, v0y, v1y, v2y)
-        max_z = max(max_z, v0z, v1z, v2z)
+    cx_x = math.cos(rad_x); sx_x = math.sin(rad_x)
+    cy_y = math.cos(rad_y); sy_y = math.sin(rad_y)
+    cz_z = math.cos(rad_z); sz_z = math.sin(rad_z)
+    
+    transformed_triangles = []
+    t_min_x = t_min_y = t_min_z = 1e9
+    t_max_x = t_max_y = t_max_z = -1e9
+    
+    def apply_transform(x, y, z):
+        x -= cx; y -= cy; z -= cz
+        x *= model_scale; y *= model_scale; z *= model_scale
+        y1 = y * cx_x - z * sx_x
+        z1 = y * sx_x + z * cx_x
+        x2 = x * cy_y + z1 * sy_y
+        z2 = -x * sy_y + z1 * cy_y
+        x3 = x2 * cz_z - y1 * sz_z
+        y3 = x2 * sz_z + y1 * cz_z
+        return x3, y3, z2
         
-    return centered_triangles, (min_x, min_y, min_z), (max_x, max_y, max_z)
+    def apply_transform_normal(nx, ny, nz):
+        ny1 = ny * cx_x - nz * sx_x
+        nz1 = ny * sx_x + nz * cx_x
+        nx2 = nx * cy_y + nz1 * sy_y
+        nz2 = -nx * sy_y + nz1 * cy_y
+        nx3 = nx2 * cz_z - ny1 * sz_z
+        ny3 = nx2 * sz_z + ny1 * cz_z
+        l = math.sqrt(nx3*nx3 + ny3*ny3 + nz2*nz2)
+        if l > 0: return nx3/l, ny3/l, nz2/l
+        return nx3, ny3, nz2
+
+    for tri in triangles:
+        v0x, v0y, v0z = apply_transform(tri[0], tri[1], tri[2])
+        v1x, v1y, v1z = apply_transform(tri[3], tri[4], tri[5])
+        v2x, v2y, v2z = apply_transform(tri[6], tri[7], tri[8])
+        nx, ny, nz = apply_transform_normal(tri[9], tri[10], tri[11])
+        
+        t_min_z = min(t_min_z, v0z, v1z, v2z)
+        transformed_triangles.append([v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, nx, ny, nz])
+        
+    final_triangles = []
+    f_min_x = f_min_y = f_min_z = 1e9
+    f_max_x = f_max_y = f_max_z = -1e9
+    
+    for tri in transformed_triangles:
+        tri[0] += pos_x; tri[1] += pos_y; tri[2] -= t_min_z
+        tri[3] += pos_x; tri[4] += pos_y; tri[5] -= t_min_z
+        tri[6] += pos_x; tri[7] += pos_y; tri[8] -= t_min_z
+        
+        f_min_x = min(f_min_x, tri[0], tri[3], tri[6])
+        f_min_y = min(f_min_y, tri[1], tri[4], tri[7])
+        f_min_z = min(f_min_z, tri[2], tri[5], tri[8])
+        f_max_x = max(f_max_x, tri[0], tri[3], tri[6])
+        f_max_y = max(f_max_y, tri[1], tri[4], tri[7])
+        f_max_z = max(f_max_z, tri[2], tri[5], tri[8])
+        
+        final_triangles.append(tuple(tri))
+        
+    return final_triangles, (f_min_x, f_min_y, f_min_z), (f_max_x, f_max_y, f_max_z)
 
 
 def get_z_slice_segments(active_triangles, z):
@@ -188,8 +225,8 @@ def generate_infill(segments, min_x, max_x, min_y, max_y, line_width):
         
     return infill_lines
                 
-def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False):
-    original_triangles, min_b, max_b = load_stl(file_bytes)
+def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0):
+    original_triangles, min_b, max_b = load_stl(file_bytes, model_scale, rot_x, rot_y, rot_z, pos_x, pos_y)
     
     distorted_triangles = []
     dist_min_z, dist_max_z = 1e9, -1e9

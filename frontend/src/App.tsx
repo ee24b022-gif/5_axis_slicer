@@ -7,10 +7,24 @@ import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
 import './index.css';
 
-function StlModel({ geometry }: { geometry: THREE.BufferGeometry | null }) {
+function StlModel({ geometry, modelScale, rotX, rotY, rotZ, posX, posY }: any) {
   if (!geometry) return null;
+  
+  const transformedGeometry = useMemo(() => {
+    const geom = geometry.clone();
+    geom.scale(modelScale, modelScale, modelScale);
+    geom.rotateX(rotX * Math.PI / 180);
+    geom.rotateY(rotY * Math.PI / 180);
+    geom.rotateZ(rotZ * Math.PI / 180);
+    geom.computeBoundingBox();
+    if (geom.boundingBox) {
+      geom.translate(posX, posY, -geom.boundingBox.min.z);
+    }
+    return geom;
+  }, [geometry, modelScale, rotX, rotY, rotZ, posX, posY]);
+
   return (
-    <mesh geometry={geometry} castShadow receiveShadow>
+    <mesh geometry={transformedGeometry} castShadow receiveShadow>
       <meshStandardMaterial 
         color="#777777" 
         roughness={0.5}
@@ -109,6 +123,12 @@ function App() {
   const [layerHeight, setLayerHeight] = useState(0.2);
   const [waveAmplitude, setWaveAmplitude] = useState(0.0);
   const [waveFrequency, setWaveFrequency] = useState(0.1);
+  const [modelScale, setModelScale] = useState(1.0);
+  const [rotX, setRotX] = useState(0);
+  const [rotY, setRotY] = useState(0);
+  const [rotZ, setRotZ] = useState(0);
+  const [posX, setPosX] = useState(0);
+  const [posY, setPosY] = useState(0);
   const [autoSegment, setAutoSegment] = useState(false);
   const [segmentInfo, setSegmentInfo] = useState<any>(null);
   const [isolateLayer, setIsolateLayer] = useState(false);
@@ -146,8 +166,8 @@ function App() {
               const maxB = geometry.boundingBox.max;
               const centerX = (minB.x + maxB.x) / 2.0;
               const centerY = (minB.y + maxB.y) / 2.0;
-              const minZ = minB.z;
-              geometry.translate(-centerX, -centerY, -minZ);
+              const centerZ = (minB.z + maxB.z) / 2.0;
+              geometry.translate(-centerX, -centerY, -centerZ);
             }
             
             setStlGeometry(geometry);
@@ -185,6 +205,12 @@ function App() {
       formData.append("wave_frequency", waveFrequency.toString());
       formData.append("infill_density", infillDensity.toString());
       formData.append("auto_segment", autoSegment ? "true" : "false");
+      formData.append("model_scale", modelScale.toString());
+      formData.append("rot_x", rotX.toString());
+      formData.append("rot_y", rotY.toString());
+      formData.append("rot_z", rotZ.toString());
+      formData.append("pos_x", posX.toString());
+      formData.append("pos_y", posY.toString());
       
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await axios.post(`${apiUrl}/slice_stl`, formData, {
@@ -262,6 +288,41 @@ function App() {
       <div className="main-content">
         <aside className="sidebar">
           <div className="accent-text" style={{ marginBottom: '10px' }}>
+            &gt; TRANSFORM MODEL
+          </div>
+          
+          <div className="controls-container" style={{ marginBottom: '20px' }}>
+            <div className="input-row">
+              <label>SCALE (Multiplier)</label>
+              <input 
+                type="number" 
+                className="terminal-input"
+                step="0.1" 
+                min="0.1"
+                value={modelScale} 
+                onChange={e => setModelScale(parseFloat(e.target.value))} 
+              />
+            </div>
+            
+            <div className="input-row" style={{ marginTop: '10px' }}>
+              <label>ROTATION X/Y/Z (Deg)</label>
+              <div style={{ display: 'flex', gap: '5px' }}>
+                <input type="number" className="terminal-input" style={{ width: '33%' }} value={rotX} onChange={e => setRotX(parseFloat(e.target.value))} />
+                <input type="number" className="terminal-input" style={{ width: '33%' }} value={rotY} onChange={e => setRotY(parseFloat(e.target.value))} />
+                <input type="number" className="terminal-input" style={{ width: '33%' }} value={rotZ} onChange={e => setRotZ(parseFloat(e.target.value))} />
+              </div>
+            </div>
+            
+            <div className="input-row" style={{ marginTop: '10px' }}>
+              <label>POSITION X/Y (mm)</label>
+              <div style={{ display: 'flex', gap: '5px' }}>
+                <input type="number" className="terminal-input" style={{ width: '50%' }} value={posX} onChange={e => setPosX(parseFloat(e.target.value))} />
+                <input type="number" className="terminal-input" style={{ width: '50%' }} value={posY} onChange={e => setPosY(parseFloat(e.target.value))} />
+              </div>
+            </div>
+          </div>
+          
+          <div className="accent-text" style={{ marginBottom: '10px', borderTop: '1px solid rgba(31,107,31,0.4)', paddingTop: '10px' }}>
             &gt; CONFIGURE VOLUMETRIC SLICER
           </div>
           
@@ -440,7 +501,7 @@ function App() {
               <shadowMaterial opacity={0.4} />
             </mesh>
             
-            <StlModel geometry={stlGeometry} />
+            <StlModel geometry={stlGeometry} modelScale={modelScale} rotX={rotX} rotY={rotY} rotZ={rotZ} posX={posX} posY={posY} />
             <Toolpath points={toolpathPoints} progress={previewProgress} maxVisibleLayer={maxVisibleLayer} isolateLayer={isolateLayer} />
             
             <OrbitControls makeDefault />
