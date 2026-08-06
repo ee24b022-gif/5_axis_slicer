@@ -389,9 +389,19 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     path = []
     layer_idx = 0
     
+    z_buckets = {}
+    for t in distorted_triangles:
+        min_l = int(math.floor(t[0] / layer_height))
+        max_l = int(math.floor(t[1] / layer_height))
+        for l in range(min_l, max_l + 1):
+            if l not in z_buckets: z_buckets[l] = []
+            z_buckets[l].append(t)
+    
     z = dist_min_z + layer_height
     while z <= min(dist_max_z, calc_z_cutoff):
-        active_triangles = [t for t in distorted_triangles if t[0] <= z and t[1] >= z]
+        l_idx = int(math.floor(z / layer_height))
+        bucket_tris = z_buckets.get(l_idx, [])
+        active_triangles = [t for t in bucket_tris if t[0] <= z and t[1] >= z]
         segments = get_z_slice_segments(active_triangles, z)
         if not segments:
             z += layer_height
@@ -473,9 +483,19 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         tilt_ny = s
         tilt_nz = c
         
+        tilt_z_buckets = {}
+        for t in tilted_triangles:
+            min_l = int(math.floor(t[0] / layer_height))
+            max_l = int(math.floor(t[1] / layer_height))
+            for l in range(min_l, max_l + 1):
+                if l not in tilt_z_buckets: tilt_z_buckets[l] = []
+                tilt_z_buckets[l].append(t)
+        
         z = tilted_min_z + layer_height
         while z <= tilted_max_z:
-            active_triangles = [t for t in tilted_triangles if t[0] <= z and t[1] >= z]
+            l_idx = int(math.floor(z / layer_height))
+            bucket_tris = tilt_z_buckets.get(l_idx, [])
+            active_triangles = [t for t in bucket_tris if t[0] <= z and t[1] >= z]
             segments = get_z_slice_segments(active_triangles, z)
             if not segments:
                 z += layer_height
