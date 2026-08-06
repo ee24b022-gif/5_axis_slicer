@@ -228,8 +228,7 @@ def generate_infill(segments, min_x, max_x, min_y, max_y, line_width):
 def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0):
     original_triangles, min_b, max_b = load_stl(file_bytes, model_scale, rot_x, rot_y, rot_z, pos_x, pos_y)
     
-    distorted_triangles = []
-    dist_min_z, dist_max_z = 1e9, -1e9
+    processed_triangles = []
     
     fade_height = 15.0
     
@@ -241,20 +240,6 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     def distort_z(x, y, z):
         wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
         return z + get_attenuation(z) * wave
-        
-    def undistort_z(x, y, z_dist):
-        wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
-        if wave == 0.0: return z_dist
-        
-        if z_dist - wave >= fade_height:
-            return z_dist - wave
-        if z_dist <= 0.0:
-            return z_dist
-            
-        true_z = z_dist / (1.0 + wave / fade_height)
-        if 0.0 <= true_z <= fade_height:
-            return true_z
-        return z_dist - wave
         
     def get_wavy_normal(x, y, true_z):
         if wave_amplitude == 0.0:
@@ -270,19 +255,21 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         length = math.sqrt(nx*nx + ny*ny + nz*nz)
         return nx/length, ny/length, nz/length
 
+    def resample_pts(p1, p2, max_len=0.5):
+        dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+        d = math.hypot(dx, dy)
+        if d <= max_len:
+            return [p1, p2]
+        n = int(math.ceil(d / max_len))
+        pts = []
+        for i in range(n + 1):
+            t = i / n
+            pts.append((p1[0] + dx*t, p1[1] + dy*t))
+        return pts
+
     for tri in original_triangles:
-        v0x, v0y, v0z = tri[0], tri[1], tri[2]
-        v1x, v1y, v1z = tri[3], tri[4], tri[5]
-        v2x, v2y, v2z = tri[6], tri[7], tri[8]
-        
-        dv0z = distort_z(v0x, v0y, v0z)
-        dv1z = distort_z(v1x, v1y, v1z)
-        dv2z = distort_z(v2x, v2y, v2z)
-        
-        dist_min_z = min(dist_min_z, dv0z, dv1z, dv2z)
-        dist_max_z = max(dist_max_z, dv0z, dv1z, dv2z)
-        
-        distorted_triangles.append((min(dv0z, dv1z, dv2z), max(dv0z, dv1z, dv2z), v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
+        v0z, v1z, v2z = tri[2], tri[5], tri[8]
+        processed_triangles.append((min(v0z, v1z, v2z), max(v0z, v1z, v2z), *tri))
 
     min_x, min_y, min_z = min_b
     max_x, max_y, max_z = max_b
@@ -311,9 +298,9 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     path = []
     layer_idx = 0
     
-    z = dist_min_z + layer_height
-    while z <= min(dist_max_z, calc_z_cutoff):
-        active_triangles = [t for t in distorted_triangles if t[0] <= z and t[1] >= z]
+    z = min_z + layer_height
+    while z <= min(max_z, calc_z_cutoff):
+        active_triangles = [t for t in processed_triangles if t[0] <= z and t[1] >= z]
         segments = get_z_slice_segments(active_triangles, z)
         if not segments:
             z += layer_height
@@ -324,23 +311,32 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         loops = chain_segments(segments)
         for loop in loops:
             for seg in loop:
-                pt = seg[0]
-                true_z = undistort_z(pt[0], pt[1], z)
-                nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
-                path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
+                resampled = resample_pts(seg[0], seg[1])
+                for pt in resampled[:-1]:
+                    true_z = distort_z(pt[0], pt[1], z)
+                    nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
+                    path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
+            if loop:
+                last_pt = loop[-1][1]
+                true_z = distort_z(last_pt[0], last_pt[1], z)
+                nx, ny, nz = get_wavy_normal(last_pt[0], last_pt[1], true_z)
+                path.append((last_pt[0], last_pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
                 
         # 2. Infill (Straight down or wavy)
         infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing)
-        for pt in infill_pts:
-            true_z = undistort_z(pt[0], pt[1], z)
-            nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
-            path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "infill"))
+        for i in range(0, len(infill_pts), 2):
+            p1, p2 = infill_pts[i], infill_pts[i+1]
+            resampled = resample_pts(p1, p2)
+            for pt in resampled:
+                true_z = distort_z(pt[0], pt[1], z)
+                nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
+                path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "infill"))
             
         z += layer_height
         layer_idx += 1
         
     # 2. Overhang Segment Loop (Support-Free Tilted Slicing)
-    if dist_max_z > calc_z_cutoff and calc_segment_tilt != 0.0:
+    if max_z > calc_z_cutoff and calc_segment_tilt != 0.0:
         tilt_rad = calc_segment_tilt * math.pi / 180.0
         c = math.cos(tilt_rad)
         s = math.sin(tilt_rad)
@@ -364,7 +360,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             nz = -dy * s + dz * c
             return px, ny, nz + cz
             
-        for t in distorted_triangles:
+        for t in processed_triangles:
             if t[1] < calc_z_cutoff: continue # Skip triangles completely below cutoff
             
             rv0 = rotate_pt(t[2], t[3], t[4])
@@ -398,16 +394,25 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             loops = chain_segments(segments)
             for loop in loops:
                 for seg in loop:
-                    pt = seg[0]
-                    orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
-                    true_z = undistort_z(orig_x, orig_y, orig_z)
+                    resampled = resample_pts(seg[0], seg[1])
+                    for pt in resampled[:-1]:
+                        orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
+                        true_z = distort_z(orig_x, orig_y, orig_z)
+                        path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
+                if loop:
+                    last_pt = loop[-1][1]
+                    orig_x, orig_y, orig_z = inverse_rotate_pt(last_pt[0], last_pt[1], z)
+                    true_z = distort_z(orig_x, orig_y, orig_z)
                     path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
                     
             infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing)
-            for pt in infill_pts:
-                orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
-                true_z = undistort_z(orig_x, orig_y, orig_z)
-                path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill"))
+            for i in range(0, len(infill_pts), 2):
+                p1, p2 = infill_pts[i], infill_pts[i+1]
+                resampled = resample_pts(p1, p2)
+                for pt in resampled:
+                    orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
+                    true_z = distort_z(orig_x, orig_y, orig_z)
+                    path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill"))
                 
             z += layer_height
             layer_idx += 1
