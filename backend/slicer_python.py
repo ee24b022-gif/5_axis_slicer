@@ -264,18 +264,13 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         if z >= fade_height: return 1.0
         return z / fade_height
     
-    def distort_z(x, y, z):
+    def distort_mesh_z(x, y, z):
+        wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
+        return z - get_attenuation(z) * wave
+        
+    def distort_toolpath_z(x, y, z):
         wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
         return z + get_attenuation(z) * wave
-        
-    def undistort_z(x, y, z_dist):
-        wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
-        if wave == 0.0: return z_dist
-        if z_dist - wave >= fade_height: return z_dist - wave
-        if z_dist <= 0.0: return z_dist
-        true_z = z_dist / (1.0 + wave / fade_height)
-        if 0.0 <= true_z <= fade_height: return true_z
-        return z_dist - wave
         
     def get_wavy_normal(x, y, true_z):
         if wave_amplitude == 0.0:
@@ -353,9 +348,9 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         v1x, v1y, v1z = tri[3], tri[4], tri[5]
         v2x, v2y, v2z = tri[6], tri[7], tri[8]
         
-        dv0z = distort_z(v0x, v0y, v0z)
-        dv1z = distort_z(v1x, v1y, v1z)
-        dv2z = distort_z(v2x, v2y, v2z)
+        dv0z = distort_mesh_z(v0x, v0y, v0z)
+        dv1z = distort_mesh_z(v1x, v1y, v1z)
+        dv2z = distort_mesh_z(v2x, v2y, v2z)
         
         t_min = min(dv0z, dv1z, dv2z)
         t_max = max(dv0z, dv1z, dv2z)
@@ -414,12 +409,12 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             for seg in loop:
                 resampled = resample_pts(seg[0], seg[1])
                 for pt in resampled[:-1]:
-                    true_z = distort_z(pt[0], pt[1], z)
+                    true_z = distort_toolpath_z(pt[0], pt[1], z)
                     nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
                     path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
             if loop:
                 last_pt = loop[-1][1]
-                true_z = distort_z(last_pt[0], last_pt[1], z)
+                true_z = distort_toolpath_z(last_pt[0], last_pt[1], z)
                 nx, ny, nz = get_wavy_normal(last_pt[0], last_pt[1], true_z)
                 path.append((last_pt[0], last_pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
                 
@@ -429,7 +424,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             p1, p2 = infill_pts[i], infill_pts[i+1]
             resampled = resample_pts(p1, p2)
             for pt in resampled:
-                true_z = distort_z(pt[0], pt[1], z)
+                true_z = distort_toolpath_z(pt[0], pt[1], z)
                 nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
                 path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "infill"))
             
@@ -518,13 +513,13 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     for pt in resampled[:-1]:
                         orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
                         if orig_z < calc_z_cutoff: continue
-                        true_z = distort_z(orig_x, orig_y, orig_z)
+                        true_z = distort_toolpath_z(orig_x, orig_y, orig_z)
                         path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
                 if loop:
                     last_pt = loop[-1][1]
                     orig_x, orig_y, orig_z = inverse_rotate_pt(last_pt[0], last_pt[1], z)
                     if orig_z >= calc_z_cutoff:
-                        true_z = distort_z(orig_x, orig_y, orig_z)
+                        true_z = distort_toolpath_z(orig_x, orig_y, orig_z)
                         path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
                     
             infill_pts = generate_infill(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, infill_spacing, infill_pattern, layer_idx)
@@ -534,7 +529,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 for pt in resampled:
                     orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
                     if orig_z < calc_z_cutoff: continue
-                    true_z = distort_z(orig_x, orig_y, orig_z)
+                    true_z = distort_toolpath_z(orig_x, orig_y, orig_z)
                     path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill"))
                 
             z += layer_height
