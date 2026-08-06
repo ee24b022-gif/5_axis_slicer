@@ -13,11 +13,16 @@ function CameraResetter({ isResetting, setIsResetting, controlsRef }: any) {
       const targetPos = new THREE.Vector3(0, -80, 15);
       const targetLook = new THREE.Vector3(0, 0, 0);
       
-      state.camera.position.lerp(targetPos, delta * 5);
-      controlsRef.current.target.lerp(targetLook, delta * 5);
+      const lerpFactor = delta * 1.5; // Slower factor for a smooth cinematic glide
+      
+      state.camera.position.lerp(targetPos, lerpFactor);
+      controlsRef.current.target.lerp(targetLook, lerpFactor);
       controlsRef.current.update();
       
-      if (state.camera.position.distanceTo(targetPos) < 0.5 && controlsRef.current.target.distanceTo(targetLook) < 0.5) {
+      if (state.camera.position.distanceTo(targetPos) < 0.2 && controlsRef.current.target.distanceTo(targetLook) < 0.2) {
+        state.camera.position.copy(targetPos);
+        controlsRef.current.target.copy(targetLook);
+        controlsRef.current.update();
         setIsResetting(false);
       }
     }
