@@ -230,7 +230,8 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     calc_segment_tilt = 0.0
     
     if auto_segment:
-        overhangs = [t for t in original_triangles if t[11] < -0.5]
+        # Ignore overhangs within 15mm of the bed (usually just base chamfers/fillets)
+        overhangs = [t for t in original_triangles if t[11] < -0.5 and min(t[2], t[5], t[8]) > min_z + 15.0]
         if overhangs:
             lowest_z = min(min(t[2], t[5], t[8]) for t in overhangs)
             calc_z_cutoff = max(min_z + 2.0, lowest_z - 2.0)
@@ -324,7 +325,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         tilt_ny = s
         tilt_nz = c
         
-        z = max(tilted_min_z, calc_z_cutoff) + layer_height
+        z = tilted_min_z + layer_height
         while z <= tilted_max_z:
             active_triangles = [t for t in tilted_triangles if t[0] <= z and t[1] >= z]
             segments = get_z_slice_segments(active_triangles, z)
