@@ -24,12 +24,14 @@ async def slice_stl(
     file: UploadFile = File(...),
     line_width: float = Form(...),
     bed_center_z: float = Form(...),
-    layer_height: float = Form(0.2)
+    layer_height: float = Form(0.2),
+    wave_amplitude: float = Form(0.0),
+    wave_frequency: float = Form(0.1)
 ):
     try:
         contents = await file.read()
         from slicer_python import slice_mesh
-        result = slice_mesh(contents, layer_height, bed_center_z)
+        result = slice_mesh(contents, layer_height, bed_center_z, wave_amplitude, wave_frequency)
         
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])

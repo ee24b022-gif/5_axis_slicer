@@ -187,8 +187,41 @@ def generate_infill(segments, min_x, max_x, min_y, max_y, line_width):
         idx += 1
     return infill_lines
 
-def slice_mesh(file_bytes, layer_height, bed_center_z):
-    triangles, min_b, max_b = load_stl(file_bytes)
+def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1):
+    original_triangles, min_b, max_b = load_stl(file_bytes)
+    
+    distorted_triangles = []
+    dist_min_z, dist_max_z = 1e9, -1e9
+    
+    def distort_z(x, y, z):
+        return z + wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
+        
+    def undistort_z(x, y, z):
+        return z - wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
+        
+    def get_wavy_normal(x, y):
+        if wave_amplitude == 0.0:
+            return 0.0, 0.0, 1.0
+        df_dx = wave_amplitude * wave_frequency * math.cos(wave_frequency * x) * math.cos(wave_frequency * y)
+        df_dy = -wave_amplitude * wave_frequency * math.sin(wave_frequency * x) * math.sin(wave_frequency * y)
+        nx, ny, nz = -df_dx, -df_dy, 1.0
+        length = math.sqrt(nx*nx + ny*ny + nz*nz)
+        return nx/length, ny/length, nz/length
+
+    for tri in original_triangles:
+        v0x, v0y, v0z = tri[0], tri[1], tri[2]
+        v1x, v1y, v1z = tri[3], tri[4], tri[5]
+        v2x, v2y, v2z = tri[6], tri[7], tri[8]
+        
+        dv0z = distort_z(v0x, v0y, v0z)
+        dv1z = distort_z(v1x, v1y, v1z)
+        dv2z = distort_z(v2x, v2y, v2z)
+        
+        dist_min_z = min(dist_min_z, dv0z, dv1z, dv2z)
+        dist_max_z = max(dist_max_z, dv0z, dv1z, dv2z)
+        
+        distorted_triangles.append((v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
+
     min_x, min_y, min_z = min_b
     max_x, max_y, max_z = max_b
     
@@ -200,9 +233,9 @@ def slice_mesh(file_bytes, layer_height, bed_center_z):
     path = []
     layer_idx = 0
     
-    z = min_z + layer_height
-    while z <= max_z:
-        segments = get_z_slice_segments(triangles, z)
+    z = dist_min_z + layer_height
+    while z <= dist_max_z:
+        segments = get_z_slice_segments(distorted_triangles, z)
         if not segments:
             z += layer_height
             layer_idx += 1
@@ -212,19 +245,16 @@ def slice_mesh(file_bytes, layer_height, bed_center_z):
         loops = chain_segments(segments)
         for loop in loops:
             for pt, seg in loop:
-                nx, ny, nz = seg[2], seg[3], seg[4]
-                # Force normal to point outwards horizontally somewhat, but keep true 3D normal for tilt
-                if nz < 0: nz = -nz # Prevent nozzle from going upside down
-                # Avoid completely flat normals to prevent 90 deg violent tilts if not needed
-                if nz < 0.1: nz = 0.1 
-                length = math.sqrt(nx*nx + ny*ny + nz*nz)
-                nx, ny, nz = nx/length, ny/length, nz/length
-                path.append((pt[0], pt[1], z, nx, ny, nz, layer_idx, "perimeter"))
+                true_z = undistort_z(pt[0], pt[1], z)
+                nx, ny, nz = get_wavy_normal(pt[0], pt[1])
+                path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
                 
-        # 2. Infill (Straight down)
+        # 2. Infill (Straight down or wavy)
         infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, line_width)
         for pt in infill_pts:
-            path.append((pt[0], pt[1], z, 0.0, 0.0, 1.0, layer_idx, "infill"))
+            true_z = undistort_z(pt[0], pt[1], z)
+            nx, ny, nz = get_wavy_normal(pt[0], pt[1])
+            path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "infill"))
             
         z += layer_height
         layer_idx += 1

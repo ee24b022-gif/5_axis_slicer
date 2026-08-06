@@ -97,6 +97,8 @@ function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
 function App() {
   const [hasEntered, setHasEntered] = useState(false);
   const [layerHeight, setLayerHeight] = useState(0.2);
+  const [waveAmplitude, setWaveAmplitude] = useState(0.0);
+  const [waveFrequency, setWaveFrequency] = useState(0.1);
   const [file, setFile] = useState<File | null>(null);
   
   const [stlGeometry, setStlGeometry] = useState<THREE.BufferGeometry | null>(null);
@@ -165,6 +167,8 @@ function App() {
       formData.append("line_width", "0.4");
       formData.append("bed_center_z", "50.0");
       formData.append("layer_height", layerHeight.toString());
+      formData.append("wave_amplitude", waveAmplitude.toString());
+      formData.append("wave_frequency", waveFrequency.toString());
       
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await axios.post(`${apiUrl}/slice_stl`, formData, {
@@ -253,6 +257,30 @@ function App() {
                 min="0.1"
                 value={layerHeight} 
                 onChange={e => setLayerHeight(parseFloat(e.target.value))} 
+              />
+            </div>
+            
+            <div className="input-row" style={{ marginTop: '10px' }}>
+              <label>WAVE AMPLITUDE (mm)</label>
+              <input 
+                type="number" 
+                className="terminal-input"
+                step="0.5" 
+                min="0"
+                value={waveAmplitude} 
+                onChange={e => setWaveAmplitude(parseFloat(e.target.value))} 
+              />
+            </div>
+            
+            <div className="input-row" style={{ marginTop: '10px' }}>
+              <label>WAVE FREQ (1/mm)</label>
+              <input 
+                type="number" 
+                className="terminal-input"
+                step="0.05" 
+                min="0"
+                value={waveFrequency} 
+                onChange={e => setWaveFrequency(parseFloat(e.target.value))} 
               />
             </div>
             
