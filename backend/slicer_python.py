@@ -383,6 +383,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     
     path = []
     layer_idx = 0
+    path_id = 0
     
     z_buckets = {}
     for t in distorted_triangles:
@@ -407,30 +408,48 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         # 1. Perimeters (5-axis tilted)
         loops = chain_segments(segments)
         for loop in loops:
+            path_id += 1
+            skipped_last = False
             for seg in loop:
                 resampled = resample_pts(seg[0], seg[1])
                 for pt in resampled[:-1]:
                     true_z = distort_toolpath_z(pt[0], pt[1], z)
-                    if true_z > calc_z_cutoff: continue
+                    if true_z > calc_z_cutoff:
+                        skipped_last = True
+                        continue
+                    if skipped_last:
+                        path_id += 1
+                        skipped_last = False
                     nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
-                    path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
+                    path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter", path_id))
             if loop:
                 last_pt = loop[-1][1]
                 true_z = distort_toolpath_z(last_pt[0], last_pt[1], z)
                 if true_z <= calc_z_cutoff:
+                    if skipped_last:
+                        path_id += 1
+                        skipped_last = False
                     nx, ny, nz = get_wavy_normal(last_pt[0], last_pt[1], true_z)
-                    path.append((last_pt[0], last_pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
+                    path.append((last_pt[0], last_pt[1], true_z, nx, ny, nz, layer_idx, "perimeter", path_id))
                 
         # 2. Infill (Straight down or wavy)
         infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
+        path_id += 1
         for i in range(0, len(infill_pts), 2):
             p1, p2 = infill_pts[i], infill_pts[i+1]
             resampled = resample_pts(p1, p2)
+            path_id += 1
+            skipped_last = False
             for pt in resampled:
                 true_z = distort_toolpath_z(pt[0], pt[1], z)
-                if true_z > calc_z_cutoff: continue
+                if true_z > calc_z_cutoff:
+                    skipped_last = True
+                    continue
+                if skipped_last:
+                    path_id += 1
+                    skipped_last = False
                 nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
-                path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "infill"))
+                path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "infill", path_id))
             
         z += layer_height
         layer_idx += 1
@@ -512,29 +531,47 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 
             loops = chain_segments(segments)
             for loop in loops:
+                path_id += 1
+                skipped_last = False
                 for seg in loop:
                     resampled = resample_pts(seg[0], seg[1])
                     for pt in resampled[:-1]:
                         orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
                         true_z = distort_toolpath_z(orig_x, orig_y, orig_z)
-                        if true_z < calc_z_cutoff: continue
-                        path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
+                        if true_z < calc_z_cutoff:
+                            skipped_last = True
+                            continue
+                        if skipped_last:
+                            path_id += 1
+                            skipped_last = False
+                        path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
                 if loop:
                     last_pt = loop[-1][1]
                     orig_x, orig_y, orig_z = inverse_rotate_pt(last_pt[0], last_pt[1], z)
                     true_z = distort_toolpath_z(orig_x, orig_y, orig_z)
                     if true_z >= calc_z_cutoff:
-                        path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
+                        if skipped_last:
+                            path_id += 1
+                            skipped_last = False
+                        path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
                     
             infill_pts = generate_infill(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, infill_spacing, infill_pattern, layer_idx)
+            path_id += 1
             for i in range(0, len(infill_pts), 2):
                 p1, p2 = infill_pts[i], infill_pts[i+1]
                 resampled = resample_pts(p1, p2)
+                path_id += 1
+                skipped_last = False
                 for pt in resampled:
                     orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
                     true_z = distort_toolpath_z(orig_x, orig_y, orig_z)
-                    if true_z < calc_z_cutoff: continue
-                    path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill"))
+                    if true_z < calc_z_cutoff:
+                        skipped_last = True
+                        continue
+                    if skipped_last:
+                        path_id += 1
+                        skipped_last = False
+                    path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill", path_id))
                 
             z += layer_height
             layer_idx += 1
@@ -559,6 +596,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     last_px = last_py = last_pz = 0.0
     last_mx = last_my = last_mz = last_mu = last_mv = 0.0
     is_first = True
+    last_path_id = -1
     
     points_json = {
         "x": [],
@@ -569,7 +607,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     }
     
     for pt in path:
-        px, py, pz, nx, ny, nz, layer, ptype = pt
+        px, py, pz, nx, ny, nz, layer, ptype, current_path_id = pt
         points_json["x"].append(round(px, 2))
         points_json["y"].append(round(py, 2))
         points_json["z"].append(round(pz, 2))
@@ -610,6 +648,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             gcode.append(f"G0 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} F3000")
             last_px, last_py, last_pz = px, py, pz
             last_mx, last_my, last_mz, last_mu, last_mv = mx, my, mz, mu, mv
+            last_path_id = current_path_id
             is_first = False
             continue
             
@@ -617,12 +656,13 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         dist_mach = math.sqrt((mx - last_mx)**2 + (my - last_my)**2 + (mz - last_mz)**2 + (mu - last_mu)**2 + (mv - last_mv)**2)
         
         # If moving to a new layer, jumping across infill, or jumping across cutoff gaps, retract and move
-        if dist_part > 1.5:
+        if dist_part > 1.5 or current_path_id != last_path_id:
             gcode.append(f"G1 E{current_e - 2.0:.3f} F2400 ; Retract")
             gcode.append(f"G0 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} F3000")
             gcode.append(f"G1 E{current_e:.3f} F2400 ; Unretract")
             last_px, last_py, last_pz = px, py, pz
             last_mx, last_my, last_mz, last_mu, last_mv = mx, my, mz, mu, mv
+            last_path_id = current_path_id
             continue
         
         current_e += dist_part * e_multiplier
