@@ -40,4 +40,10 @@ async def slice_stl(
 
 # Serve static files from the built frontend
 frontend_dist = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
+os.makedirs(frontend_dist, exist_ok=True)
+index_path = os.path.join(frontend_dist, "index.html")
+if not os.path.exists(index_path):
+    with open(index_path, "w") as f:
+        f.write("<html><body>Frontend is served by Vercel. This is the API server.</body></html>")
+
 app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")
