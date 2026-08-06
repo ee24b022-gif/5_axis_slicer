@@ -43,7 +43,7 @@ async def slice_stl(
         cmd = ["./slicer_engine", tmp_stl, str(line_width), str(resolution), str(bed_center_z)]
         if not os.path.exists("./slicer_engine"):
             # Fallback compile just in case
-            subprocess.run(["g++", "-std=c++17", "-O3", "-o", "slicer_engine", "slicer.cpp"], check=True)
+            subprocess.run(["g++", "-std=c++17", "-O2", "-o", "slicer_engine", "slicer.cpp"], check=True)
             
         if os.path.exists("./slicer_engine"):
             os.chmod("./slicer_engine", 0o755)

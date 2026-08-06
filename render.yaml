@@ -3,7 +3,7 @@ services:
     name: open5x-backend
     env: python
     rootDir: backend
-    buildCommand: "g++ -std=c++17 -O3 -o slicer_engine slicer.cpp && pip install -r requirements.txt"
+    buildCommand: "g++ -std=c++17 -O2 -o slicer_engine slicer.cpp && pip install -r requirements.txt"
     startCommand: "uvicorn api:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: PYTHON_VERSION
