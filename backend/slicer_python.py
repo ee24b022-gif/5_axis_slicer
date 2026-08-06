@@ -250,7 +250,8 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         # 1. Perimeters (5-axis tilted)
         loops = chain_segments(segments)
         for loop in loops:
-            for pt, seg in loop:
+            for seg in loop:
+                pt = seg[0]
                 true_z = undistort_z(pt[0], pt[1], z)
                 nx, ny, nz = get_wavy_normal(pt[0], pt[1])
                 path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
