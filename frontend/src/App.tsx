@@ -1,11 +1,29 @@
 import { useState, useRef, useMemo } from 'react';
 import axios from 'axios';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 // @ts-ignore
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
 import './index.css';
+
+function CameraResetter({ isResetting, setIsResetting, controlsRef }: any) {
+  useFrame((state, delta) => {
+    if (isResetting && controlsRef.current) {
+      const targetPos = new THREE.Vector3(0, -80, 15);
+      const targetLook = new THREE.Vector3(0, 0, 0);
+      
+      state.camera.position.lerp(targetPos, delta * 5);
+      controlsRef.current.target.lerp(targetLook, delta * 5);
+      controlsRef.current.update();
+      
+      if (state.camera.position.distanceTo(targetPos) < 0.5 && controlsRef.current.target.distanceTo(targetLook) < 0.5) {
+        setIsResetting(false);
+      }
+    }
+  });
+  return null;
+}
 
 function StlModel({ geometry, modelScale, rotX, rotY, rotZ, posX, posY }: any) {
   if (!geometry) return null;
@@ -138,6 +156,7 @@ function App() {
   const [stlGeometry, setStlGeometry] = useState<THREE.BufferGeometry | null>(null);
   
   const [isSlicing, setIsSlicing] = useState(false);
+  const [isResettingCamera, setIsResettingCamera] = useState(false);
   const [toolpathPoints, setToolpathPoints] = useState<any[]>([]);
   const [gcodeData, setGcodeData] = useState<string | null>(null);
   const [previewProgress, setPreviewProgress] = useState(100);
@@ -552,12 +571,13 @@ function App() {
             <StlModel geometry={stlGeometry} modelScale={modelScale} rotX={rotX} rotY={rotY} rotZ={rotZ} posX={posX} posY={posY} />
             <Toolpath points={toolpathPoints} progress={previewProgress} maxVisibleLayer={maxVisibleLayer} isolateLayer={isolateLayer} />
             
-            <OrbitControls ref={controlsRef} makeDefault />
+            <CameraResetter isResetting={isResettingCamera} setIsResetting={setIsResettingCamera} controlsRef={controlsRef} />
+            <OrbitControls ref={controlsRef} makeDefault onStart={() => setIsResettingCamera(false)} />
           </Canvas>
           <button 
             className="btn-secondary" 
             style={{ position: 'absolute', bottom: '20px', right: '20px', zIndex: 10, width: 'auto', padding: '8px 16px', fontSize: '14px' }}
-            onClick={() => controlsRef.current?.reset()}
+            onClick={() => setIsResettingCamera(true)}
           >
             [ HOME_VIEW ]
           </button>
