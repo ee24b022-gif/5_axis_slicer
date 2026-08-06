@@ -3,17 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import math
-import trimesh
 import io
 import os
 import json
 import uuid
 import subprocess
-
-from toolpath import generate_zig_zag_toolpath_on_mesh
-from kinematics import Kinematics5Axis
-from gcode import GCodeGenerator
 
 app = FastAPI(title="Open5x Slicer API")
 
