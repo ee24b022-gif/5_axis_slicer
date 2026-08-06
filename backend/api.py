@@ -29,8 +29,7 @@ async def slice_stl_endpoint(
     wave_amplitude: float = Form(0.0),
     wave_frequency: float = Form(0.1),
     infill_density: float = Form(20.0),
-    z_cutoff: float = Form(1000.0),
-    segment_tilt: float = Form(0.0)
+    auto_segment: bool = Form(False)
 ):
     try:
         contents = await file.read()
@@ -46,8 +45,7 @@ async def slice_stl_endpoint(
             wave_amplitude,
             wave_frequency,
             infill_density,
-            z_cutoff,
-            segment_tilt
+            auto_segment
         )
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])

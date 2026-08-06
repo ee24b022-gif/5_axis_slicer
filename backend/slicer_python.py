@@ -188,7 +188,7 @@ def generate_infill(segments, min_x, max_x, min_y, max_y, line_width):
         
     return infill_lines
                 
-def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, z_cutoff=1e9, segment_tilt=0.0):
+def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False):
     original_triangles, min_b, max_b = load_stl(file_bytes)
     
     distorted_triangles = []
@@ -226,6 +226,17 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     min_x, min_y, min_z = min_b
     max_x, max_y, max_z = max_b
     
+    calc_z_cutoff = 1e9
+    calc_segment_tilt = 0.0
+    
+    if auto_segment:
+        overhangs = [t for t in original_triangles if t[11] < -0.5]
+        if overhangs:
+            lowest_z = min(min(t[2], t[5], t[8]) for t in overhangs)
+            calc_z_cutoff = max(min_z + 2.0, lowest_z - 2.0)
+            avg_ny = sum(t[10] for t in overhangs) / len(overhangs)
+            calc_segment_tilt = -45.0 if avg_ny > 0 else 45.0
+            
     if (max_x - min_x) > 500.0 or (max_y - min_y) > 500.0:
         return {"error": "Model is too large (>500mm). Scale down your STL to millimeters to prevent memory crash."}
         
@@ -239,7 +250,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     layer_idx = 0
     
     z = dist_min_z + layer_height
-    while z <= min(dist_max_z, z_cutoff):
+    while z <= min(dist_max_z, calc_z_cutoff):
         active_triangles = [t for t in distorted_triangles if t[0] <= z and t[1] >= z]
         segments = get_z_slice_segments(active_triangles, z)
         if not segments:
@@ -267,11 +278,11 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         layer_idx += 1
         
     # 2. Overhang Segment Loop (Support-Free Tilted Slicing)
-    if dist_max_z > z_cutoff and segment_tilt != 0.0:
-        tilt_rad = segment_tilt * math.pi / 180.0
+    if dist_max_z > calc_z_cutoff and calc_segment_tilt != 0.0:
+        tilt_rad = calc_segment_tilt * math.pi / 180.0
         c = math.cos(tilt_rad)
         s = math.sin(tilt_rad)
-        cz = z_cutoff
+        cz = calc_z_cutoff
         
         tilted_triangles = []
         tilted_min_z = 1e9
@@ -292,7 +303,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             return px, ny, nz + cz
             
         for t in distorted_triangles:
-            if t[1] < z_cutoff: continue # Skip triangles completely below cutoff
+            if t[1] < calc_z_cutoff: continue # Skip triangles completely below cutoff
             
             rv0 = rotate_pt(t[2], t[3], t[4])
             rv1 = rotate_pt(t[5], t[6], t[7])
@@ -313,7 +324,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         tilt_ny = s
         tilt_nz = c
         
-        z = max(tilted_min_z, z_cutoff) + layer_height
+        z = max(tilted_min_z, calc_z_cutoff) + layer_height
         while z <= tilted_max_z:
             active_triangles = [t for t in tilted_triangles if t[0] <= z and t[1] >= z]
             segments = get_z_slice_segments(active_triangles, z)
@@ -426,5 +437,10 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         
     return {
         "toolpath_points": points_json,
-        "gcode": "\\n".join(gcode) + "\\n"
+        "gcode": "\\n".join(gcode) + "\\n",
+        "segmentation_info": {
+            "auto_segment": auto_segment,
+            "calc_z_cutoff": round(calc_z_cutoff, 2) if calc_z_cutoff != 1e9 else "None",
+            "calc_segment_tilt": round(calc_segment_tilt, 2)
+        }
     }

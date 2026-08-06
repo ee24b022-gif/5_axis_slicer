@@ -109,8 +109,8 @@ function App() {
   const [layerHeight, setLayerHeight] = useState(0.2);
   const [waveAmplitude, setWaveAmplitude] = useState(0.0);
   const [waveFrequency, setWaveFrequency] = useState(0.1);
-  const [zCutoff, setZCutoff] = useState(1000);
-  const [segmentTilt, setSegmentTilt] = useState(-45);
+  const [autoSegment, setAutoSegment] = useState(false);
+  const [segmentInfo, setSegmentInfo] = useState<any>(null);
   const [isolateLayer, setIsolateLayer] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   
@@ -172,6 +172,7 @@ function App() {
     setUploadProgress(0);
     setToolpathPoints([]);
     setGcodeData(null);
+    setSegmentInfo(null);
     setPreviewProgress(100);
     
     try {
@@ -183,8 +184,7 @@ function App() {
       formData.append("wave_amplitude", waveAmplitude.toString());
       formData.append("wave_frequency", waveFrequency.toString());
       formData.append("infill_density", infillDensity.toString());
-      formData.append("z_cutoff", zCutoff.toString());
-      formData.append("segment_tilt", segmentTilt.toString());
+      formData.append("auto_segment", autoSegment ? "true" : "false");
       
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await axios.post(`${apiUrl}/slice_stl`, formData, {
@@ -208,6 +208,7 @@ function App() {
       
       const gcode = response.data.gcode;
       const points = response.data.toolpath_points;
+      const segInfo = response.data.segmentation_info;
       
       if (points.length > 0) {
         const maxLayer = Math.max(...points.map((p: any) => p.layer));
@@ -217,6 +218,7 @@ function App() {
       
       setToolpathPoints(points);
       setGcodeData(gcode);
+      if (segInfo) setSegmentInfo(segInfo);
       setStatus(`SUCCESS: GENERATED ${points.length} Pts`);
       
     } catch (error: any) {
@@ -313,28 +315,23 @@ function App() {
               />
             </div>
             
-            <div className="input-row" style={{ marginTop: '20px', borderTop: '1px solid rgba(31,107,31,0.4)', paddingTop: '10px' }}>
-              <label style={{ color: '#39ff14' }}>Z-CUTOFF PLANE (mm)</label>
+            <div className="input-row" style={{ marginTop: '20px', borderTop: '1px solid rgba(31,107,31,0.4)', paddingTop: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <input 
-                type="number" 
-                className="terminal-input"
-                step="5" 
-                min="0"
-                value={zCutoff} 
-                onChange={e => setZCutoff(parseFloat(e.target.value))} 
+                type="checkbox" 
+                id="autoSegment" 
+                checked={autoSegment}
+                onChange={(e) => setAutoSegment(e.target.checked)}
               />
+              <label htmlFor="autoSegment" style={{ color: '#39ff14', cursor: 'pointer', fontWeight: 'bold' }}>AUTO-SEGMENT OVERHANGS</label>
             </div>
             
-            <div className="input-row" style={{ marginTop: '10px' }}>
-              <label style={{ color: '#39ff14' }}>SEGMENT 2 TILT (deg)</label>
-              <input 
-                type="number" 
-                className="terminal-input"
-                step="5" 
-                value={segmentTilt} 
-                onChange={e => setSegmentTilt(parseFloat(e.target.value))} 
-              />
-            </div>
+            {segmentInfo && segmentInfo.auto_segment && (
+              <div style={{ marginTop: '10px', fontSize: '11px', color: '#ff8c00', backgroundColor: '#111', padding: '8px', border: '1px solid #1f6b1f' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>ANALYSIS RESULTS:</div>
+                <div>Z-CUTOFF: {segmentInfo.calc_z_cutoff} mm</div>
+                <div>BED TILT: {segmentInfo.calc_segment_tilt}°</div>
+              </div>
+            )}
             
             {toolpathPoints.length > 0 && (
               <>
