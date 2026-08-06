@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import io
 import os
@@ -64,7 +64,43 @@ async def slice_stl_endpoint(
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
             
-        return result
+        def stream_response():
+            try:
+                # 1. Segmentation Info
+                seg_json = json.dumps(result["segmentation_info"])
+                yield f'{{"segmentation_info": {seg_json}, "toolpath_points": {{'
+                
+                # 2. Toolpath Points (Array streaming)
+                pts = result["toolpath_points"]
+                for key, arr in pts.items():
+                    yield f'"{key}": ['
+                    chunk_size = 5000
+                    for i in range(0, len(arr), chunk_size):
+                        chunk = arr[i:i+chunk_size]
+                        if key in ('x', 'y', 'z'):
+                            s = ",".join(f"{v:.2f}" for v in chunk)
+                        else:
+                            s = ",".join(str(v) for v in chunk)
+                        if i > 0 and s: yield ","
+                        yield s
+                    yield ']'
+                    if key != "type": yield ','
+                yield '}, "gcode": "'
+                
+                # 3. GCode streaming
+                gcode_file = result["gcode_file"]
+                gcode_file.seek(0)
+                while True:
+                    chunk = gcode_file.read(65536)
+                    if not chunk: break
+                    yield chunk.replace('\n', '\\n').replace('"', '\\"')
+                yield '"}'
+                
+            finally:
+                if "gcode_file" in result:
+                    result["gcode_file"].close()
+
+        return StreamingResponse(stream_response(), media_type="application/json")
     except Exception as e:
         import traceback
         traceback.print_exc()

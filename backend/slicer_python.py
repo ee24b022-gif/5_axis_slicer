@@ -1,6 +1,8 @@
 import math
 import struct
 import json
+import array
+import tempfile
 
 class BVHNode:
     __slots__ = ['min_x', 'min_y', 'min_z', 'max_x', 'max_y', 'max_z', 'left', 'right', 'first', 'count']
@@ -579,38 +581,27 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     if not path:
         return {"error": "No path generated"}
         
-    # Generate GCode
-    gcode = []
-    gcode.append("; Open5x Volumetric Slicer Output (Python Engine)")
-    gcode.append("G21 ; Set units to millimeters")
-    gcode.append("G90 ; Absolute positioning")
-    gcode.append("M82 ; Absolute extrusion mode")
-    gcode.append("G28 ; Home all axes")
-    gcode.append("G0 Z50 F3000 ; Move up to avoid collisions")
-    
-    current_v = 0.0
-    current_e = 0.0
-    base_feedrate = 1500.0
-    e_multiplier = 0.05
-    
-    last_px = last_py = last_pz = 0.0
-    last_mx = last_my = last_mz = last_mu = last_mv = 0.0
-    is_first = True
-    last_path_id = -1
-    
     points_json = {
-        "x": [],
-        "y": [],
-        "z": [],
-        "layer": [],
-        "type": []
+        "x": array.array('f'),
+        "y": array.array('f'),
+        "z": array.array('f'),
+        "layer": array.array('H'),
+        "type": array.array('B')
     }
+    
+    gcode_file = tempfile.TemporaryFile(mode='w+')
+    gcode_file.write("; Open5x Volumetric Slicer Output (Python Engine)\\n")
+    gcode_file.write("G21 ; Set units to millimeters\\n")
+    gcode_file.write("G90 ; Absolute positioning\\n")
+    gcode_file.write("M82 ; Absolute extrusion mode\\n")
+    gcode_file.write("G28 ; Home all axes\\n")
+    gcode_file.write("G0 Z50 F3000 ; Move up to avoid collisions\\n")
     
     for pt in path:
         px, py, pz, nx, ny, nz, layer, ptype, current_path_id = pt
-        points_json["x"].append(round(px, 2))
-        points_json["y"].append(round(py, 2))
-        points_json["z"].append(round(pz, 2))
+        points_json["x"].append(px)
+        points_json["y"].append(py)
+        points_json["z"].append(pz)
         points_json["layer"].append(layer)
         points_json["type"].append(0 if ptype == "perimeter" else 1)
         
@@ -645,7 +636,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         mu = u_deg
         
         if is_first:
-            gcode.append(f"G0 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} F3000")
+            gcode_file.write(f"G0 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} F3000\\n")
             last_px, last_py, last_pz = px, py, pz
             last_mx, last_my, last_mz, last_mu, last_mv = mx, my, mz, mu, mv
             last_path_id = current_path_id
@@ -657,9 +648,9 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         
         # If moving to a new layer, jumping across infill, or jumping across cutoff gaps, retract and move
         if dist_part > 1.5 or current_path_id != last_path_id:
-            gcode.append(f"G1 E{current_e - 2.0:.3f} F2400 ; Retract")
-            gcode.append(f"G0 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} F3000")
-            gcode.append(f"G1 E{current_e:.3f} F2400 ; Unretract")
+            gcode_file.write(f"G1 E{current_e - 2.0:.3f} F2400 ; Retract\\n")
+            gcode_file.write(f"G0 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} F3000\\n")
+            gcode_file.write(f"G1 E{current_e:.3f} F2400 ; Unretract\\n")
             last_px, last_py, last_pz = px, py, pz
             last_mx, last_my, last_mz, last_mu, last_mv = mx, my, mz, mu, mv
             last_path_id = current_path_id
@@ -669,14 +660,15 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         feedrate = base_feedrate * (dist_mach / dist_part) if dist_part > 0 else base_feedrate
         if feedrate > 6000.0: feedrate = 6000.0
         
-        gcode.append(f"G1 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} E{current_e:.3f} F{feedrate:.1f}")
+        gcode_file.write(f"G1 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} E{current_e:.3f} F{feedrate:.1f}\\n")
         
         last_px, last_py, last_pz = px, py, pz
         last_mx, last_my, last_mz, last_mu, last_mv = mx, my, mz, mu, mv
         
+    gcode_file.flush()
     return {
         "toolpath_points": points_json,
-        "gcode": "\\n".join(gcode) + "\\n",
+        "gcode_file": gcode_file,
         "segmentation_info": {
             "auto_segment": auto_segment,
             "calc_z_cutoff": round(calc_z_cutoff, 2) if calc_z_cutoff != 1e9 else "None",
