@@ -566,11 +566,11 @@ function App() {
           <div style={{ marginTop: '30px', borderTop: '1px solid rgba(31,107,31,0.4)', paddingTop: '20px' }}>
             <div className="stat-box">
               <div className="text-muted" style={{ fontSize: '12px' }}>GEOMETRY ENGINE</div>
-              <div style={{ fontSize: '18px', fontWeight: 'bold' }}>{toolpathPoints.length > 0 ? 'ONLINE' : 'STANDBY'}</div>
+              <div style={{ fontSize: '18px', fontWeight: 'bold' }}>{toolpathPoints && toolpathPoints.x && toolpathPoints.x.length > 0 ? 'ONLINE' : 'STANDBY'}</div>
             </div>
             <div className="stat-box">
               <div className="text-muted" style={{ fontSize: '12px' }}>TOOLPATH POINTS</div>
-              <div style={{ fontSize: '18px', fontWeight: 'bold' }}>{toolpathPoints.length}</div>
+              <div style={{ fontSize: '18px', fontWeight: 'bold' }}>{toolpathPoints && toolpathPoints.x ? toolpathPoints.x.length : 0}</div>
             </div>
           </div>
 
