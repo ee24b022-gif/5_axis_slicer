@@ -501,11 +501,11 @@ function App() {
             
             <mesh position={[0, 0, -2.5]} receiveShadow>
               <boxGeometry args={[250, 250, 5]} />
-              <meshStandardMaterial color="#1a1a1a" roughness={0.9} metalness={0.1} />
+              <meshStandardMaterial color="#3a3a3a" roughness={0.8} metalness={0.2} />
             </mesh>
             
             <gridHelper 
-              args={[250, 25, 0x1f6b1f, 0x0a2b0a]} 
+              args={[250, 25, 0x39ff14, 0x1f6b1f]} 
               rotation={[Math.PI / 2, 0, 0]} 
               position={[0, 0, 0.01]} 
             />
