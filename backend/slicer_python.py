@@ -597,6 +597,16 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     gcode_file.write("G28 ; Home all axes\\n")
     gcode_file.write("G0 Z50 F3000 ; Move up to avoid collisions\\n")
     
+    current_v = 0.0
+    current_e = 0.0
+    base_feedrate = 1500.0
+    e_multiplier = 0.05
+    
+    last_px = last_py = last_pz = 0.0
+    last_mx = last_my = last_mz = last_mu = last_mv = 0.0
+    is_first = True
+    last_path_id = -1
+    
     for pt in path:
         px, py, pz, nx, ny, nz, layer, ptype, current_path_id = pt
         points_json["x"].append(px)
