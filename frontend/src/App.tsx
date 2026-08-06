@@ -22,28 +22,31 @@ function StlModel({ geometry }: { geometry: THREE.BufferGeometry | null }) {
   );
 }
 
-function Toolpath({ points, progress, maxVisibleLayer }: { points: any[], progress: number, maxVisibleLayer: number }) {
+function Toolpath({ points, progress, maxVisibleLayer, isolateLayer }: { points: any[], progress: number, maxVisibleLayer: number, isolateLayer: boolean }) {
   if (!points || points.length < 2) return null;
   
   const pointCount = Math.max(2, Math.floor(points.length * (progress / 100)));
-  const visiblePoints = points.slice(0, pointCount).filter(p => p.layer <= maxVisibleLayer);
+  const visiblePoints = points.slice(0, pointCount).filter(p => isolateLayer ? p.layer === maxVisibleLayer : p.layer <= maxVisibleLayer);
   
   const lines = useMemo(() => {
-    // Group points into continuous segments to avoid drawing lines across retracts
     const segments = [];
     let currentSegment: any[] = [];
     let currentType = visiblePoints[0]?.type || 'perimeter';
+    let currentLayer = visiblePoints[0]?.layer || 0;
     
     for (let i = 0; i < visiblePoints.length; i++) {
       const p = visiblePoints[i];
-      if (p.type !== currentType || (i > 0 && Math.abs(p.z - visiblePoints[i-1].z) > 0.1) || (i > 0 && Math.sqrt(Math.pow(p.x - visiblePoints[i-1].x, 2) + Math.pow(p.y - visiblePoints[i-1].y, 2)) > 5.0)) {
-        if (currentSegment.length > 1) segments.push({ type: currentType, points: currentSegment });
+      if (p.type !== currentType || p.layer !== currentLayer || (i > 0 && Math.abs(p.z - visiblePoints[i-1].z) > 0.1 && p.type === 'infill') || (i > 0 && Math.sqrt(Math.pow(p.x - visiblePoints[i-1].x, 2) + Math.pow(p.y - visiblePoints[i-1].y, 2)) > 5.0)) {
+        if (currentSegment.length > 1) segments.push({ type: currentType, layer: currentLayer, points: currentSegment });
         currentSegment = [];
         currentType = p.type;
+        currentLayer = p.layer;
       }
       currentSegment.push(p);
     }
-    if (currentSegment.length > 1) segments.push({ type: currentType, points: currentSegment });
+    if (currentSegment.length > 1) segments.push({ type: currentType, layer: currentLayer, points: currentSegment });
+    
+    const colors = [0xffff00, 0x00ff00, 0x00ffff, 0x1e90ff, 0xff00ff, 0xff4500]; // Rainbow palette for layers
     
     return segments.map((seg, idx) => {
       const positions = new Float32Array(seg.points.length * 3);
@@ -54,8 +57,14 @@ function Toolpath({ points, progress, maxVisibleLayer }: { points: any[], progre
       }
       const geom = new THREE.BufferGeometry();
       geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      
+      const isPerimeter = seg.type === 'perimeter';
+      const baseColor = colors[seg.layer % colors.length];
+      
+      // Perimeters are bright white to highlight the 5-axis edge, infill is colored by layer
       const material = new THREE.LineBasicMaterial({ 
-        color: seg.type === 'perimeter' ? 0x39ff14 : 0x1e90ff 
+        color: isPerimeter ? 0xffffff : baseColor,
+        linewidth: 2
       });
       return <primitive key={idx} object={new THREE.Line(geom, material)} />;
     });
@@ -99,6 +108,7 @@ function App() {
   const [layerHeight, setLayerHeight] = useState(0.2);
   const [waveAmplitude, setWaveAmplitude] = useState(0.0);
   const [waveFrequency, setWaveFrequency] = useState(0.1);
+  const [isolateLayer, setIsolateLayer] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   
   const [stlGeometry, setStlGeometry] = useState<THREE.BufferGeometry | null>(null);
@@ -297,6 +307,17 @@ function App() {
                     className="terminal-slider"
                   />
                 </div>
+                
+                <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input 
+                    type="checkbox" 
+                    id="isolate" 
+                    checked={isolateLayer}
+                    onChange={(e) => setIsolateLayer(e.target.checked)}
+                  />
+                  <label htmlFor="isolate" style={{ cursor: 'pointer' }}>ISOLATE SINGLE LAYER</label>
+                </div>
+
                 <div className="input-row" style={{ marginTop: '10px' }}>
                   <label>PRINT PROGRESS: {previewProgress}%</label>
                   <input 
@@ -309,8 +330,8 @@ function App() {
                   />
                 </div>
                 <div style={{ marginTop: '10px', fontSize: '10px', display: 'flex', gap: '10px' }}>
-                  <div style={{ color: '#39ff14' }}>■ 5-Axis Perimeter</div>
-                  <div style={{ color: '#1e90ff' }}>■ 3-Axis Infill</div>
+                  <div style={{ color: '#ffffff' }}>■ 5-Axis Perimeter</div>
+                  <div style={{ color: '#1e90ff' }}>■ Multi-Color Infill</div>
                 </div>
               </>
             )}
@@ -381,7 +402,7 @@ function App() {
             </mesh>
             
             <StlModel geometry={stlGeometry} />
-            <Toolpath points={toolpathPoints} progress={previewProgress} maxVisibleLayer={maxVisibleLayer} />
+            <Toolpath points={toolpathPoints} progress={previewProgress} maxVisibleLayer={maxVisibleLayer} isolateLayer={isolateLayer} />
             
             <OrbitControls makeDefault />
           </Canvas>
