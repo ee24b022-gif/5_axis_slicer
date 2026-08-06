@@ -155,6 +155,14 @@ function App() {
             setUploadProgress(percent);
             if (percent === 100) setStatus('PROCESSING_STL...');
           }
+        },
+        onDownloadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setStatus(`DOWNLOADING_GCODE... ${percent}%`);
+          } else {
+            setStatus(`DOWNLOADING_GCODE... ${Math.round(progressEvent.loaded / 1024 / 1024)}MB`);
+          }
         }
       });
       

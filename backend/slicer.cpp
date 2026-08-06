@@ -255,7 +255,19 @@ void buildBVH(int nodeIdx) {
     }
     
     int leftCount = i - bvh[nodeIdx].first;
-    if (leftCount == 0 || leftCount == bvh[nodeIdx].count) return; 
+    if (leftCount == 0 || leftCount == bvh[nodeIdx].count) {
+        leftCount = bvh[nodeIdx].count / 2;
+        nth_element(tri_indices.begin() + bvh[nodeIdx].first, 
+                    tri_indices.begin() + bvh[nodeIdx].first + leftCount, 
+                    tri_indices.begin() + bvh[nodeIdx].first + bvh[nodeIdx].count,
+                    [&](int a, int b) {
+                        double ca = (tri_bounds[a].minB.x + tri_bounds[a].maxB.x) / 2.0;
+                        double cb = (tri_bounds[b].minB.x + tri_bounds[b].maxB.x) / 2.0;
+                        if (axis == 1) { ca = (tri_bounds[a].minB.y + tri_bounds[a].maxB.y) / 2.0; cb = (tri_bounds[b].minB.y + tri_bounds[b].maxB.y) / 2.0; }
+                        if (axis == 2) { ca = (tri_bounds[a].minB.z + tri_bounds[a].maxB.z) / 2.0; cb = (tri_bounds[b].minB.z + tri_bounds[b].maxB.z) / 2.0; }
+                        return ca < cb;
+                    });
+    }
     
     // Save first and count before pushing to vector to avoid dangling reference if vector reallocates
     int nodeFirst = bvh[nodeIdx].first;
