@@ -512,14 +512,14 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     resampled = resample_pts(seg[0], seg[1])
                     for pt in resampled[:-1]:
                         orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
-                        if orig_z < calc_z_cutoff: continue
                         true_z = distort_toolpath_z(orig_x, orig_y, orig_z)
+                        if true_z < calc_z_cutoff: continue
                         path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
                 if loop:
                     last_pt = loop[-1][1]
                     orig_x, orig_y, orig_z = inverse_rotate_pt(last_pt[0], last_pt[1], z)
-                    if orig_z >= calc_z_cutoff:
-                        true_z = distort_toolpath_z(orig_x, orig_y, orig_z)
+                    true_z = distort_toolpath_z(orig_x, orig_y, orig_z)
+                    if true_z >= calc_z_cutoff:
                         path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter"))
                     
             infill_pts = generate_infill(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, infill_spacing, infill_pattern, layer_idx)
@@ -528,8 +528,8 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 resampled = resample_pts(p1, p2)
                 for pt in resampled:
                     orig_x, orig_y, orig_z = inverse_rotate_pt(pt[0], pt[1], z)
-                    if orig_z < calc_z_cutoff: continue
                     true_z = distort_toolpath_z(orig_x, orig_y, orig_z)
+                    if true_z < calc_z_cutoff: continue
                     path.append((orig_x, orig_y, true_z, tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill"))
                 
             z += layer_height
