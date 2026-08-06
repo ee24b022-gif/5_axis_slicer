@@ -180,14 +180,7 @@ def generate_infill(segments, min_x, max_x, min_y, max_y, line_width):
                 line_pts.append((x0, y))
                 line_pts.append((x1, y))
                 
-        if line_pts:
-            infill_lines.extend(line_pts)
-            
-        y += line_width
-        idx += 1
-    return infill_lines
-
-def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1):
+def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0):
     original_triangles, min_b, max_b = load_stl(file_bytes)
     
     distorted_triangles = []
@@ -229,6 +222,10 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         return {"error": "Model is too large (>500mm). Scale down your STL to millimeters to prevent memory crash."}
         
     line_width = 0.4 # Default nozzle line width
+    if infill_density <= 0.1:
+        infill_spacing = 1e9 # effectively no infill
+    else:
+        infill_spacing = line_width / (infill_density / 100.0)
     
     path = []
     layer_idx = 0
@@ -250,7 +247,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
                 
         # 2. Infill (Straight down or wavy)
-        infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, line_width)
+        infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing)
         for pt in infill_pts:
             true_z = undistort_z(pt[0], pt[1], z)
             nx, ny, nz = get_wavy_normal(pt[0], pt[1])

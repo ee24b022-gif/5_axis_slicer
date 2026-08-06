@@ -59,11 +59,11 @@ function Toolpath({ points, progress, maxVisibleLayer, isolateLayer }: { points:
       geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       
       const isPerimeter = seg.type === 'perimeter';
-      const baseColor = colors[seg.layer % colors.length];
+      const layerColor = colors[seg.layer % colors.length];
       
-      // Perimeters are bright white to highlight the 5-axis edge, infill is colored by layer
+      // Perimeters use rainbow layer colors, infill uses a solid single color (Orange)
       const material = new THREE.LineBasicMaterial({ 
-        color: isPerimeter ? 0xffffff : baseColor,
+        color: isPerimeter ? layerColor : 0xff8c00,
         linewidth: 2
       });
       return <primitive key={idx} object={new THREE.Line(geom, material)} />;
@@ -105,6 +105,7 @@ function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
 
 function App() {
   const [hasEntered, setHasEntered] = useState(false);
+  const [infillDensity, setInfillDensity] = useState(20);
   const [layerHeight, setLayerHeight] = useState(0.2);
   const [waveAmplitude, setWaveAmplitude] = useState(0.0);
   const [waveFrequency, setWaveFrequency] = useState(0.1);
@@ -179,6 +180,7 @@ function App() {
       formData.append("layer_height", layerHeight.toString());
       formData.append("wave_amplitude", waveAmplitude.toString());
       formData.append("wave_frequency", waveFrequency.toString());
+      formData.append("infill_density", infillDensity.toString());
       
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await axios.post(`${apiUrl}/slice_stl`, formData, {
@@ -259,6 +261,19 @@ function App() {
           
           <div className="controls-container">
             <div className="input-row">
+              <label>INFILL DENSITY (%)</label>
+              <input 
+                type="number" 
+                className="terminal-input"
+                step="5" 
+                min="0"
+                max="100"
+                value={infillDensity} 
+                onChange={e => setInfillDensity(parseInt(e.target.value))} 
+              />
+            </div>
+            
+            <div className="input-row" style={{ marginTop: '10px' }}>
               <label>LAYER HEIGHT (mm)</label>
               <input 
                 type="number" 
@@ -297,7 +312,7 @@ function App() {
             {toolpathPoints.length > 0 && (
               <>
                 <div className="input-row" style={{ marginTop: '20px' }}>
-                  <label>MAX VISIBLE LAYER: {maxVisibleLayer} / {totalLayers}</label>
+                  <label>VISIBLE LAYER: {maxVisibleLayer} / {totalLayers}</label>
                   <input 
                     type="range" 
                     min="0" 
@@ -330,8 +345,8 @@ function App() {
                   />
                 </div>
                 <div style={{ marginTop: '10px', fontSize: '10px', display: 'flex', gap: '10px' }}>
-                  <div style={{ color: '#ffffff' }}>■ 5-Axis Perimeter</div>
-                  <div style={{ color: '#1e90ff' }}>■ Multi-Color Infill</div>
+                  <div style={{ color: '#ffffff' }}>■ 5-Axis Perimeter (Rainbow)</div>
+                  <div style={{ color: '#ff8c00' }}>■ 3-Axis Infill (Solid Orange)</div>
                 </div>
               </>
             )}
