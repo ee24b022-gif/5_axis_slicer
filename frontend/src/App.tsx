@@ -1,30 +1,16 @@
 import { useState, useRef, useMemo } from 'react';
 import axios from 'axios';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid } from '@react-three/drei';
+import { OrbitControls, Grid, TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 // @ts-ignore
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
 import './index.css';
 
-function StlModel({ geometry, modelScale, rotX, rotY, rotZ, posX, posY }: any) {
+function StlModel({ geometry }: { geometry: THREE.BufferGeometry | null }) {
   if (!geometry) return null;
-  
-  const transformedGeometry = useMemo(() => {
-    const geom = geometry.clone();
-    geom.scale(modelScale, modelScale, modelScale);
-    geom.rotateX(rotX * Math.PI / 180);
-    geom.rotateY(rotY * Math.PI / 180);
-    geom.rotateZ(rotZ * Math.PI / 180);
-    geom.computeBoundingBox();
-    if (geom.boundingBox) {
-      geom.translate(posX, posY, -geom.boundingBox.min.z);
-    }
-    return geom;
-  }, [geometry, modelScale, rotX, rotY, rotZ, posX, posY]);
-
   return (
-    <mesh geometry={transformedGeometry} castShadow receiveShadow>
+    <mesh geometry={geometry} castShadow receiveShadow>
       <meshStandardMaterial 
         color="#777777" 
         roughness={0.5}
@@ -129,6 +115,7 @@ function App() {
   const [rotZ, setRotZ] = useState(0);
   const [posX, setPosX] = useState(0);
   const [posY, setPosY] = useState(0);
+  const [transformMode, setTransformMode] = useState("translate");
   const [autoSegment, setAutoSegment] = useState(false);
   const [segmentInfo, setSegmentInfo] = useState<any>(null);
   const [isolateLayer, setIsolateLayer] = useState(false);
@@ -289,6 +276,24 @@ function App() {
         <aside className="sidebar">
           <div className="accent-text" style={{ marginBottom: '10px' }}>
             &gt; TRANSFORM MODEL
+          </div>
+          
+          <div className="btn-group" style={{ marginBottom: '10px', display: 'flex', gap: '5px' }}>
+            <button 
+              className={transformMode === 'translate' ? 'btn-primary' : 'btn-secondary'} 
+              style={{ width: '33%', padding: '5px', fontSize: '10px' }}
+              onClick={() => setTransformMode('translate')}
+            >MOVE</button>
+            <button 
+              className={transformMode === 'rotate' ? 'btn-primary' : 'btn-secondary'} 
+              style={{ width: '33%', padding: '5px', fontSize: '10px' }}
+              onClick={() => setTransformMode('rotate')}
+            >ROTATE</button>
+            <button 
+              className={transformMode === 'scale' ? 'btn-primary' : 'btn-secondary'} 
+              style={{ width: '33%', padding: '5px', fontSize: '10px' }}
+              onClick={() => setTransformMode('scale')}
+            >SCALE</button>
           </div>
           
           <div className="controls-container" style={{ marginBottom: '20px' }}>
@@ -501,7 +506,27 @@ function App() {
               <shadowMaterial opacity={0.4} />
             </mesh>
             
-            <StlModel geometry={stlGeometry} modelScale={modelScale} rotX={rotX} rotY={rotY} rotZ={rotZ} posX={posX} posY={posY} />
+            <TransformControls 
+              mode={transformMode as any}
+              showZ={transformMode !== 'translate'} // Hide Z arrow for move mode (since it snaps to bed)
+              position={[posX, posY, 0]}
+              rotation={[rotX * Math.PI / 180, rotY * Math.PI / 180, rotZ * Math.PI / 180]}
+              scale={[modelScale, modelScale, modelScale]}
+              onMouseUp={(e: any) => {
+                if (e.target.object) {
+                  const obj = e.target.object;
+                  setPosX(Number(obj.position.x.toFixed(2)));
+                  setPosY(Number(obj.position.y.toFixed(2)));
+                  setRotX(Number((obj.rotation.x * 180 / Math.PI).toFixed(2)));
+                  setRotY(Number((obj.rotation.y * 180 / Math.PI).toFixed(2)));
+                  setRotZ(Number((obj.rotation.z * 180 / Math.PI).toFixed(2)));
+                  setModelScale(Number(obj.scale.x.toFixed(2)));
+                }
+              }}
+            >
+              <StlModel geometry={stlGeometry} />
+            </TransformControls>
+            
             <Toolpath points={toolpathPoints} progress={previewProgress} maxVisibleLayer={maxVisibleLayer} isolateLayer={isolateLayer} />
             
             <OrbitControls makeDefault />
