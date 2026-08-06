@@ -7,10 +7,24 @@ import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
 import './index.css';
 
-function StlModel({ geometry }: { geometry: THREE.BufferGeometry | null }) {
+function StlModel({ geometry, modelScale, rotX, rotY, rotZ, posX, posY }: any) {
   if (!geometry) return null;
+  
+  const transformedGeometry = useMemo(() => {
+    const geom = geometry.clone();
+    geom.scale(modelScale, modelScale, modelScale);
+    geom.rotateX(rotX * Math.PI / 180);
+    geom.rotateY(rotY * Math.PI / 180);
+    geom.rotateZ(rotZ * Math.PI / 180);
+    geom.computeBoundingBox();
+    if (geom.boundingBox) {
+      geom.translate(posX, posY, -geom.boundingBox.min.z);
+    }
+    return geom;
+  }, [geometry, modelScale, rotX, rotY, rotZ, posX, posY]);
+
   return (
-    <mesh geometry={geometry} castShadow receiveShadow>
+    <mesh geometry={transformedGeometry} castShadow receiveShadow>
       <meshStandardMaterial 
         color="#777777" 
         roughness={0.5}
