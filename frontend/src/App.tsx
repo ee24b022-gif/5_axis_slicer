@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo } from 'react';
 import axios from 'axios';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid, TransformControls } from '@react-three/drei';
+import { OrbitControls, TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 // @ts-ignore
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
@@ -499,12 +499,16 @@ function App() {
             <directionalLight position={[20, 20, 30]} intensity={1.5} castShadow shadow-mapSize={[1024, 1024]} />
             <directionalLight position={[-20, -20, 10]} intensity={0.5} />
             
-            <Grid infiniteGrid fadeDistance={100} sectionColor="#1f6b1f" cellColor="transparent" />
-            
-            <mesh position={[0, 0, -0.1]} receiveShadow>
-              <planeGeometry args={[200, 200]} />
-              <shadowMaterial opacity={0.4} />
+            <mesh position={[0, 0, -2.5]} receiveShadow>
+              <boxGeometry args={[250, 250, 5]} />
+              <meshStandardMaterial color="#1a1a1a" roughness={0.9} metalness={0.1} />
             </mesh>
+            
+            <gridHelper 
+              args={[250, 25, 0x1f6b1f, 0x0a2b0a]} 
+              rotation={[Math.PI / 2, 0, 0]} 
+              position={[0, 0, 0.01]} 
+            />
             
             <TransformControls 
               mode={transformMode as any}
