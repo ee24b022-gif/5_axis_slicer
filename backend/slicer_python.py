@@ -393,7 +393,8 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             z_buckets[l].append(t)
     
     z = dist_min_z + layer_height
-    while z <= min(dist_max_z, calc_z_cutoff):
+    base_loop_max = calc_z_cutoff + wave_amplitude + 0.01 if calc_z_cutoff != 1e9 else dist_max_z
+    while z <= min(dist_max_z, base_loop_max):
         l_idx = int(math.floor(z / layer_height))
         bucket_tris = z_buckets.get(l_idx, [])
         active_triangles = [t for t in bucket_tris if t[0] <= z and t[1] >= z]
@@ -410,13 +411,15 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 resampled = resample_pts(seg[0], seg[1])
                 for pt in resampled[:-1]:
                     true_z = distort_toolpath_z(pt[0], pt[1], z)
+                    if true_z > calc_z_cutoff: continue
                     nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
                     path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
             if loop:
                 last_pt = loop[-1][1]
                 true_z = distort_toolpath_z(last_pt[0], last_pt[1], z)
-                nx, ny, nz = get_wavy_normal(last_pt[0], last_pt[1], true_z)
-                path.append((last_pt[0], last_pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
+                if true_z <= calc_z_cutoff:
+                    nx, ny, nz = get_wavy_normal(last_pt[0], last_pt[1], true_z)
+                    path.append((last_pt[0], last_pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
                 
         # 2. Infill (Straight down or wavy)
         infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
@@ -425,6 +428,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             resampled = resample_pts(p1, p2)
             for pt in resampled:
                 true_z = distort_toolpath_z(pt[0], pt[1], z)
+                if true_z > calc_z_cutoff: continue
                 nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
                 path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "infill"))
             
