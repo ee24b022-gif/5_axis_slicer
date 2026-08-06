@@ -231,17 +231,41 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     distorted_triangles = []
     dist_min_z, dist_max_z = 1e9, -1e9
     
+    fade_height = 15.0
+    
+    def get_attenuation(z):
+        if z <= 0.0: return 0.0
+        if z >= fade_height: return 1.0
+        return z / fade_height
+    
     def distort_z(x, y, z):
-        return z + wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
+        wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
+        return z + get_attenuation(z) * wave
         
-    def undistort_z(x, y, z):
-        return z - wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
+    def undistort_z(x, y, z_dist):
+        wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
+        if wave == 0.0: return z_dist
         
-    def get_wavy_normal(x, y):
+        if z_dist - wave >= fade_height:
+            return z_dist - wave
+        if z_dist <= 0.0:
+            return z_dist
+            
+        true_z = z_dist / (1.0 + wave / fade_height)
+        if 0.0 <= true_z <= fade_height:
+            return true_z
+        return z_dist - wave
+        
+    def get_wavy_normal(x, y, true_z):
         if wave_amplitude == 0.0:
             return 0.0, 0.0, 1.0
-        df_dx = wave_amplitude * wave_frequency * math.cos(wave_frequency * x) * math.cos(wave_frequency * y)
-        df_dy = -wave_amplitude * wave_frequency * math.sin(wave_frequency * x) * math.sin(wave_frequency * y)
+            
+        att = get_attenuation(true_z)
+        if att == 0.0:
+            return 0.0, 0.0, 1.0
+            
+        df_dx = att * wave_amplitude * wave_frequency * math.cos(wave_frequency * x) * math.cos(wave_frequency * y)
+        df_dy = -att * wave_amplitude * wave_frequency * math.sin(wave_frequency * x) * math.sin(wave_frequency * y)
         nx, ny, nz = -df_dx, -df_dy, 1.0
         length = math.sqrt(nx*nx + ny*ny + nz*nz)
         return nx/length, ny/length, nz/length
@@ -302,14 +326,14 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             for seg in loop:
                 pt = seg[0]
                 true_z = undistort_z(pt[0], pt[1], z)
-                nx, ny, nz = get_wavy_normal(pt[0], pt[1])
+                nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
                 path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "perimeter"))
                 
         # 2. Infill (Straight down or wavy)
         infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing)
         for pt in infill_pts:
             true_z = undistort_z(pt[0], pt[1], z)
-            nx, ny, nz = get_wavy_normal(pt[0], pt[1])
+            nx, ny, nz = get_wavy_normal(pt[0], pt[1], true_z)
             path.append((pt[0], pt[1], true_z, nx, ny, nz, layer_idx, "infill"))
             
         z += layer_height

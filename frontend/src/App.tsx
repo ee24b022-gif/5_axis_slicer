@@ -528,9 +528,13 @@ function App() {
                 }
               }}
             >
-              <StlModel geometry={stlGeometry} />
+              <mesh visible={false}>
+                <boxGeometry args={[50, 50, 50]} />
+                <meshBasicMaterial />
+              </mesh>
             </TransformControls>
             
+            <StlModel geometry={stlGeometry} modelScale={modelScale} rotX={rotX} rotY={rotY} rotZ={rotZ} posX={posX} posY={posY} />
             <Toolpath points={toolpathPoints} progress={previewProgress} maxVisibleLayer={maxVisibleLayer} isolateLayer={isolateLayer} />
             
             <OrbitControls makeDefault />
