@@ -147,6 +147,7 @@ function App() {
   const [status, setStatus] = useState<string>('SYSTEM_READY');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const controlsRef = useRef<any>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -507,7 +508,7 @@ function App() {
           </div>
         </aside>
 
-        <main className="canvas-area">
+        <main className="canvas-area" style={{ position: 'relative' }}>
           <Canvas shadows camera={{ position: [0, -80, 15], up: [0, 0, 1], fov: 50 }}>
             <ambientLight intensity={0.3} />
             <directionalLight position={[20, 20, 30]} intensity={1.5} castShadow shadow-mapSize={[1024, 1024]} />
@@ -551,8 +552,15 @@ function App() {
             <StlModel geometry={stlGeometry} modelScale={modelScale} rotX={rotX} rotY={rotY} rotZ={rotZ} posX={posX} posY={posY} />
             <Toolpath points={toolpathPoints} progress={previewProgress} maxVisibleLayer={maxVisibleLayer} isolateLayer={isolateLayer} />
             
-            <OrbitControls makeDefault />
+            <OrbitControls ref={controlsRef} makeDefault />
           </Canvas>
+          <button 
+            className="btn-secondary" 
+            style={{ position: 'absolute', bottom: '20px', right: '20px', zIndex: 10, width: 'auto', padding: '8px 16px', fontSize: '14px' }}
+            onClick={() => controlsRef.current?.reset()}
+          >
+            [ HOME_VIEW ]
+          </button>
         </main>
       </div>
     </div>
