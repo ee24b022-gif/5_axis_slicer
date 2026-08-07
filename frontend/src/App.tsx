@@ -35,6 +35,7 @@ function StlModel({ geometry, modelScale, rotX, rotY, rotZ, posX, posY }: any) {
   
   const transformedGeometry = useMemo(() => {
     const geom = geometry.clone();
+    geom.center(); // Center exactly like the backend does before applying scale and rotation!
     geom.scale(modelScale, modelScale, modelScale);
     geom.rotateX(rotX * Math.PI / 180);
     geom.rotateY(rotY * Math.PI / 180);

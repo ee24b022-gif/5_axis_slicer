@@ -270,9 +270,24 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
         return z - get_attenuation(z) * wave
         
-    def distort_toolpath_z(x, y, z):
+    def distort_toolpath_z(x, y, z_dist):
         wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
-        return z + get_attenuation(z) * wave
+        if z_dist <= 0.0:
+            return z_dist
+        
+        # Calculate what z_dist would be exactly at fade_height
+        z_dist_fade = fade_height - wave
+        
+        if z_dist >= z_dist_fade:
+            return z_dist + wave
+            
+        # In the linear fade zone, z_dist = z_orig - (z_orig / fade_height) * wave
+        # Solve for z_orig: z_orig = z_dist / (1.0 - wave / fade_height)
+        denom = 1.0 - (wave / fade_height)
+        if denom <= 0.01: # Prevent division by zero if amplitude >= fade_height
+            return z_dist + wave
+            
+        return z_dist / denom
         
     def get_wavy_normal(x, y, true_z):
         if wave_amplitude == 0.0:
