@@ -364,84 +364,139 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
         
     if calc_z_cutoff != 1e9: calc_z_cutoff -= t_min_z
-        
-    def clip_triangle_3d(v0, v1, v2, n, z_clip):
-        pts = [v0, v1, v2]
-        below, above = [], []
-        for i, p in enumerate(pts):
-            if p[2] <= z_clip + 1e-6: below.append((i, p))
-            else: above.append((i, p))
-        if len(below) == 3: return [(v0, v1, v2, n)], []
-        if len(above) == 3: return [], [(v0, v1, v2, n)]
-        def intersect(pa, pb):
-            t = (z_clip - pa[2]) / (pb[2] - pa[2])
-            return (pa[0] + t*(pb[0]-pa[0]), pa[1] + t*(pb[1]-pa[1]), z_clip)
-        if len(below) == 1:
-            i_b = below[0][0]
-            p0 = pts[i_b]; p1 = pts[(i_b + 1) % 3]; p2 = pts[(i_b + 2) % 3]
-            i1 = intersect(p0, p1); i2 = intersect(p0, p2)
-            return [(p0, i1, i2, n)], [(i1, p1, p2, n), (i1, p2, i2, n)]
-        else:
-            i_a = above[0][0]
-            p2 = pts[i_a]; p0 = pts[(i_a + 1) % 3]; p1 = pts[(i_a + 2) % 3]
-            i1 = intersect(p1, p2); i2 = intersect(p0, p2)
-            return [(p0, p1, i1, n), (p0, i1, i2, n)], [(i2, i1, p2, n)]
-            
-    base_distorted_triangles, tilted_distorted_triangles = [], []
-    dist_min_z, dist_max_z = 1e9, -1e9
+    
+    distorted_triangles = []
+    dist_min_z = 1e9
+    dist_max_z = -1e9
+    
     for tri in transformed_triangles:
-        v0, v1, v2 = (tri[0], tri[1], tri[2]), (tri[3], tri[4], tri[5]), (tri[6], tri[7], tri[8])
-        n = (tri[9], tri[10], tri[11])
-        below, above = clip_triangle_3d(v0, v1, v2, n, calc_z_cutoff)
-        for t in below:
-            d0z, d1z, d2z = distort_mesh_z(*t[0]), distort_mesh_z(*t[1]), distort_mesh_z(*t[2])
-            t_min, t_max = min(d0z, d1z, d2z), max(d0z, d1z, d2z)
-            dist_min_z, dist_max_z = min(dist_min_z, t_min), max(dist_max_z, t_max)
-            base_distorted_triangles.append((t_min, t_max, t[0][0], t[0][1], d0z, t[1][0], t[1][1], d1z, t[2][0], t[2][1], d2z, t[3][0], t[3][1], t[3][2]))
-        for t in above:
-            d0z, d1z, d2z = distort_mesh_z(*t[0]), distort_mesh_z(*t[1]), distort_mesh_z(*t[2])
-            t_min, t_max = min(d0z, d1z, d2z), max(d0z, d1z, d2z)
-            tilted_distorted_triangles.append((t_min, t_max, t[0][0], t[0][1], d0z, t[1][0], t[1][1], d1z, t[2][0], t[2][1], d2z, t[3][0], t[3][1], t[3][2]))
+        v0x, v0y, v0z = tri[0], tri[1], tri[2]
+        v1x, v1y, v1z = tri[3], tri[4], tri[5]
+        v2x, v2y, v2z = tri[6], tri[7], tri[8]
+        
+        dv0z = distort_mesh_z(v0x, v0y, v0z)
+        dv1z = distort_mesh_z(v1x, v1y, v1z)
+        dv2z = distort_mesh_z(v2x, v2y, v2z)
+        
+        t_min = min(dv0z, dv1z, dv2z)
+        t_max = max(dv0z, dv1z, dv2z)
+        
+        dist_min_z = min(dist_min_z, t_min)
+        dist_max_z = max(dist_max_z, t_max)
+        
+        distorted_triangles.append((t_min, t_max, v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
+        
+    def resample_polyline(pts, max_len=0.5):
+        if not pts: return []
+        resampled = [pts[0]]
+        for i in range(len(pts)-1):
+            p1, p2 = pts[i], pts[i+1]
+            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+            d = math.hypot(dx, dy)
+            if d <= max_len:
+                resampled.append(p2)
+                continue
+            n = int(math.ceil(d / max_len))
+            for j in range(1, n + 1):
+                t = j / n
+                resampled.append((p1[0] + dx*t, p1[1] + dy*t))
+        return resampled
+        
+    def clip_polyline(pts, z_base, is_tilted, keep_below):
+        chunks = []
+        current_chunk = []
+        
+        for i in range(len(pts)-1):
+            if is_tilted:
+                orig_x1, orig_y1, orig_z1 = inverse_rotate_pt(pts[i][0], pts[i][1], z_base)
+                z1 = distort_toolpath_z(orig_x1, orig_y1, orig_z1)
+                orig_x2, orig_y2, orig_z2 = inverse_rotate_pt(pts[i+1][0], pts[i+1][1], z_base)
+                z2 = distort_toolpath_z(orig_x2, orig_y2, orig_z2)
+                p1_out = (orig_x1, orig_y1, z1)
+                p2_out = (orig_x2, orig_y2, z2)
+            else:
+                z1 = distort_toolpath_z(pts[i][0], pts[i][1], z_base)
+                z2 = distort_toolpath_z(pts[i+1][0], pts[i+1][1], z_base)
+                p1_out = (pts[i][0], pts[i][1], z1)
+                p2_out = (pts[i+1][0], pts[i+1][1], z2)
+                
+            def is_valid(z): return z <= calc_z_cutoff + 1e-4 if keep_below else z >= calc_z_cutoff - 1e-4
+            
+            v1, v2 = is_valid(z1), is_valid(z2)
+            
+            if v1 and v2:
+                if not current_chunk: current_chunk.append(p1_out)
+                current_chunk.append(p2_out)
+            elif not v1 and not v2:
+                pass
+            else:
+                t = (calc_z_cutoff - z1) / (z2 - z1) if z2 != z1 else 0
+                ix = p1_out[0] + t * (p2_out[0] - p1_out[0])
+                iy = p1_out[1] + t * (p2_out[1] - p1_out[1])
+                i_out = (ix, iy, calc_z_cutoff)
+                
+                if v1:
+                    if not current_chunk: current_chunk.append(p1_out)
+                    current_chunk.append(i_out)
+                    chunks.append(current_chunk)
+                    current_chunk = []
+                else:
+                    current_chunk.append(i_out)
+                    current_chunk.append(p2_out)
+                    
+        if current_chunk: chunks.append(current_chunk)
+        return chunks
     
     path, layer_idx, path_id = [], 0, 0
     z_buckets = {}
-    for t in base_distorted_triangles:
+    for t in distorted_triangles:
         for l in range(int(math.floor(t[0] / layer_height)), int(math.floor(t[1] / layer_height)) + 1):
             z_buckets.setdefault(l, []).append(t)
     
     z = dist_min_z + layer_height
-    while z <= dist_max_z:
+    base_loop_max = calc_z_cutoff + wave_amplitude + 0.01 if calc_z_cutoff != 1e9 else dist_max_z
+    while z <= min(dist_max_z, base_loop_max):
         l_idx = int(math.floor(z / layer_height))
         segments = get_z_slice_segments([t for t in z_buckets.get(l_idx, []) if t[0] <= z and t[1] >= z], z)
         if not segments:
             z += layer_height; layer_idx += 1; continue
-        loops = chain_segments(segments)
-        for loop in loops:
-            path_id += 1
-            for seg in loop:
-                for pt in resample_pts(seg[0], seg[1])[:-1]:
-                    path.append((*pt, distort_toolpath_z(*pt, z), *get_wavy_normal(*pt, distort_toolpath_z(*pt, z)), layer_idx, "perimeter", path_id))
-            if loop:
-                last_pt = loop[-1][1]
-                path.append((*last_pt, distort_toolpath_z(*last_pt, z), *get_wavy_normal(*last_pt, distort_toolpath_z(*last_pt, z)), layer_idx, "perimeter", path_id))
+        for loop in chain_segments(segments):
+            pts = [loop[0][0]]
+            for seg in loop: pts.append(seg[1])
+            resampled = resample_polyline(pts)
+            chunks = clip_polyline(resampled, z, False, True)
+            for chunk in chunks:
+                path_id += 1
+                for pt in chunk:
+                    nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
+                    path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "perimeter", path_id))
         infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
-        path_id += 1
         for i in range(0, len(infill_pts), 2):
-            for pt in resample_pts(infill_pts[i], infill_pts[i+1]):
-                true_z = distort_toolpath_z(*pt, z)
-                path.append((*pt, true_z, *get_wavy_normal(*pt, true_z), layer_idx, "infill", path_id))
+            resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
+            chunks = clip_polyline(resampled, z, False, True)
+            for chunk in chunks:
+                path_id += 1
+                for pt in chunk:
+                    nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
+                    path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "infill", path_id))
         z += layer_height; layer_idx += 1
         
-    if calc_z_cutoff != 1e9 and len(tilted_distorted_triangles) > 0:
+    if calc_z_cutoff != 1e9:
         c, s = math.cos(calc_segment_tilt * math.pi / 180.0), math.sin(calc_segment_tilt * math.pi / 180.0)
         cz = calc_z_cutoff
         def rotate_pt(px, py, pz): return (px, py * c - (pz - cz) * s, py * s + (pz - cz) * c + cz)
         def inverse_rotate_pt(px, py, pz): return (px, py * c + (pz - cz) * s, -py * s + (pz - cz) * c + cz)
-        tilted_triangles, tilted_min_z, tilted_max_z = [], 1e9, -1e9
-        for t in tilted_distorted_triangles:
+        tilted_triangles = []
+        tilted_min_z, tilted_max_z = 1e9, -1e9
+        tilted_min_x, tilted_max_x = 1e9, -1e9
+        tilted_min_y, tilted_max_y = 1e9, -1e9
+        for t in distorted_triangles:
+            if t[1] < calc_z_cutoff: continue
             rv0, rv1, rv2 = rotate_pt(t[2], t[3], t[4]), rotate_pt(t[5], t[6], t[7]), rotate_pt(t[8], t[9], t[10])
             t_min, t_max = min(rv0[2], rv1[2], rv2[2]), max(rv0[2], rv1[2], rv2[2])
             tilted_min_z, tilted_max_z = min(tilted_min_z, t_min), max(tilted_max_z, t_max)
+            tilted_min_x, tilted_max_x = min(tilted_min_x, rv0[0], rv1[0], rv2[0]), max(tilted_max_x, rv0[0], rv1[0], rv2[0])
+            tilted_min_y, tilted_max_y = min(tilted_min_y, rv0[1], rv1[1], rv2[1]), max(tilted_max_y, rv0[1], rv1[1], rv2[1])
             tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], t[11], t[12] * c - t[13] * s, t[12] * s + t[13] * c))
         tilt_nx, tilt_ny, tilt_nz = 0.0, s, c
         tilt_z_buckets = {}
@@ -455,20 +510,22 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             if not segments:
                 z += layer_height; layer_idx += 1; continue
             for loop in chain_segments(segments):
-                path_id += 1
-                for seg in loop:
-                    for pt in resample_pts(seg[0], seg[1])[:-1]:
-                        ox, oy, oz = inverse_rotate_pt(*pt, z)
-                        path.append((ox, oy, distort_toolpath_z(ox, oy, oz), tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
-                if loop:
-                    ox, oy, oz = inverse_rotate_pt(*loop[-1][1], z)
-                    path.append((ox, oy, distort_toolpath_z(ox, oy, oz), tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
-            infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
-            path_id += 1
+                pts = [loop[0][0]]
+                for seg in loop: pts.append(seg[1])
+                resampled = resample_polyline(pts)
+                chunks = clip_polyline(resampled, z, True, False)
+                for chunk in chunks:
+                    path_id += 1
+                    for pt in chunk:
+                        path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
+            infill_pts = generate_infill(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, infill_spacing, infill_pattern, layer_idx)
             for i in range(0, len(infill_pts), 2):
-                for pt in resample_pts(infill_pts[i], infill_pts[i+1]):
-                    ox, oy, oz = inverse_rotate_pt(*pt, z)
-                    path.append((ox, oy, distort_toolpath_z(ox, oy, oz), tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill", path_id))
+                resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
+                chunks = clip_polyline(resampled, z, True, False)
+                for chunk in chunks:
+                    path_id += 1
+                    for pt in chunk:
+                        path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill", path_id))
             z += layer_height; layer_idx += 1
             
     if not path:
