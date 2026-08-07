@@ -177,22 +177,22 @@ function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
 function Nozzle({ visible }: { visible: boolean }) {
   if (!visible) return null;
   return (
-    <group position={[0, 0, 50]}>
+    <group position={[0, 0, 50]} rotation={[Math.PI / 2, 0, 0]}>
       {/* Nozzle Cone */}
-      <mesh rotation={[Math.PI, 0, 0]} position={[0, 0, 10]}>
+      <mesh position={[0, -10, 0]}>
         <coneGeometry args={[2, 20, 32]} />
         <meshStandardMaterial color="#ff4500" metalness={0.8} roughness={0.2} />
       </mesh>
       {/* Nozzle Tip */}
-      <mesh position={[0, 0, 0.5]}>
-        <cylinderGeometry args={[0.5, 0.2, 1, 16]} />
+      <mesh position={[0, 0.5, 0]}>
+        <cylinderGeometry args={[0.2, 0.5, 1, 16]} />
         <meshStandardMaterial color="#cccccc" metalness={0.9} roughness={0.1} />
       </mesh>
     </group>
   );
 }
 
-function KinematicGroup({ children, points, progress, simulationMode, isPlaying, setPreviewProgress }: { children: React.ReactNode, points: any, progress: number, simulationMode: boolean, isPlaying: boolean, setPreviewProgress: (p: number) => void }) {
+function KinematicGroup({ children, points, progress, simulationMode, isPlaying, simulationSpeed, setPreviewProgress }: { children: React.ReactNode, points: any, progress: number, simulationMode: boolean, isPlaying: boolean, simulationSpeed: number, setPreviewProgress: (p: number) => void }) {
   const groupRef = useRef<THREE.Group>(null);
   const targetPos = useRef(new THREE.Vector3());
   const targetQuat = useRef(new THREE.Quaternion());
@@ -201,7 +201,7 @@ function KinematicGroup({ children, points, progress, simulationMode, isPlaying,
   useFrame((state, delta) => {
     if (isPlaying) {
       if (state.clock.elapsedTime - lastUpdate.current > 0.02) { // approx 50 FPS updates
-        const nextProgress = Math.min(100, progress + 0.1);
+        const nextProgress = Math.min(100, progress + (0.1 * simulationSpeed));
         setPreviewProgress(nextProgress);
         lastUpdate.current = state.clock.elapsedTime;
       }
@@ -279,6 +279,7 @@ function App() {
   const [status, setStatus] = useState<string>('SYSTEM_READY');
   const [simulationMode, setSimulationMode] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [simulationSpeed, setSimulationSpeed] = useState(1.0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const controlsRef = useRef<any>(null);
 
@@ -616,6 +617,25 @@ function App() {
                   </button>
                 </div>
                 
+                {simulationMode && (
+                  <div className="input-row" style={{ marginTop: '10px' }}>
+                    <label>SIMULATION SPEED</label>
+                    <select 
+                      className="terminal-input"
+                      value={simulationSpeed} 
+                      onChange={e => setSimulationSpeed(parseFloat(e.target.value))}
+                      style={{ width: '80px' }}
+                    >
+                      <option value={0.1}>0.1x</option>
+                      <option value={0.25}>0.25x</option>
+                      <option value={0.5}>0.5x</option>
+                      <option value={1.0}>1.0x</option>
+                      <option value={2.0}>2.0x</option>
+                      <option value={5.0}>5.0x</option>
+                    </select>
+                  </div>
+                )}
+                
                 <div style={{ marginTop: '10px', fontSize: '10px', display: 'flex', gap: '10px' }}>
                   <div style={{ color: '#ffffff' }}>■ 5-Axis Perimeter (Rainbow)</div>
                   <div style={{ color: '#ff8c00' }}>■ 3-Axis Infill (Solid Orange)</div>
@@ -683,7 +703,7 @@ function App() {
             
             <Nozzle visible={simulationMode} />
             
-            <KinematicGroup points={toolpathPoints} progress={previewProgress} simulationMode={simulationMode} isPlaying={isPlaying} setPreviewProgress={setPreviewProgress}>
+            <KinematicGroup points={toolpathPoints} progress={previewProgress} simulationMode={simulationMode} isPlaying={isPlaying} simulationSpeed={simulationSpeed} setPreviewProgress={setPreviewProgress}>
               <mesh position={[0, 0, -2.5]} receiveShadow>
                 <boxGeometry args={[250, 250, 5]} />
                 <meshStandardMaterial color="#3a3a3a" roughness={0.8} metalness={0.2} />
