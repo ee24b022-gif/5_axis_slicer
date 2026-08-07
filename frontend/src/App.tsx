@@ -174,6 +174,78 @@ function WelcomeScreen({ onEnter }: { onEnter: () => void }) {
     </div>
   );
 }
+function Nozzle({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+  return (
+    <group position={[0, 0, 50]}>
+      {/* Nozzle Cone */}
+      <mesh rotation={[Math.PI, 0, 0]} position={[0, 0, 10]}>
+        <coneGeometry args={[2, 20, 32]} />
+        <meshStandardMaterial color="#ff4500" metalness={0.8} roughness={0.2} />
+      </mesh>
+      {/* Nozzle Tip */}
+      <mesh position={[0, 0, 0.5]}>
+        <cylinderGeometry args={[0.5, 0.2, 1, 16]} />
+        <meshStandardMaterial color="#cccccc" metalness={0.9} roughness={0.1} />
+      </mesh>
+    </group>
+  );
+}
+
+function KinematicGroup({ children, points, progress, simulationMode, isPlaying, setPreviewProgress }: { children: React.ReactNode, points: any, progress: number, simulationMode: boolean, isPlaying: boolean, setPreviewProgress: (p: number) => void }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const targetPos = useRef(new THREE.Vector3());
+  const targetQuat = useRef(new THREE.Quaternion());
+  const lastUpdate = useRef(0);
+  
+  useFrame((state, delta) => {
+    if (isPlaying) {
+      if (state.clock.elapsedTime - lastUpdate.current > 0.02) { // approx 50 FPS updates
+        const nextProgress = Math.min(100, progress + 0.1);
+        setPreviewProgress(nextProgress);
+        lastUpdate.current = state.clock.elapsedTime;
+      }
+    }
+
+    if (!groupRef.current) return;
+
+    if (!simulationMode || !points || !points.x || points.x.length < 2) {
+      targetPos.current.set(0, 0, 0);
+      targetQuat.current.identity();
+    } else {
+      const totalPoints = points.x.length;
+      const idx = Math.max(0, Math.min(totalPoints - 1, Math.floor(totalPoints * (progress / 100))));
+      
+      const px = points.x[idx];
+      const py = points.y[idx];
+      const pz = points.z[idx];
+      
+      let nx = 0, ny = 0, nz = 1;
+      if (points.nx && points.nx.length > idx) {
+        nx = points.nx[idx];
+        ny = points.ny[idx];
+        nz = points.nz[idx];
+      }
+      
+      const targetNormal = new THREE.Vector3(nx, ny, nz).normalize();
+      const up = new THREE.Vector3(0, 0, 1);
+      const quat = new THREE.Quaternion().setFromUnitVectors(targetNormal, up);
+      targetQuat.current.copy(quat);
+      
+      const pointPos = new THREE.Vector3(px, py, pz);
+      pointPos.applyQuaternion(quat);
+      
+      const nozzlePos = new THREE.Vector3(0, 0, 50);
+      targetPos.current.copy(nozzlePos).sub(pointPos);
+    }
+    
+    const lerpFactor = Math.min(1.0, delta * 15.0);
+    groupRef.current.position.lerp(targetPos.current, lerpFactor);
+    groupRef.current.quaternion.slerp(targetQuat.current, lerpFactor);
+  });
+
+  return <group ref={groupRef}>{children}</group>;
+}
 
 function App() {
   const [hasEntered, setHasEntered] = useState(false);
@@ -518,11 +590,31 @@ function App() {
                     type="range" 
                     min="0" 
                     max="100" 
+                    step="0.1"
                     value={previewProgress} 
-                    onChange={e => setPreviewProgress(parseInt(e.target.value))}
+                    onChange={e => setPreviewProgress(parseFloat(e.target.value))}
                     className="terminal-slider"
                   />
                 </div>
+                
+                <div style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
+                  <button 
+                    className={simulationMode ? "btn-primary" : "btn-secondary"} 
+                    style={{ flex: 1, padding: '5px', fontSize: '10px' }}
+                    onClick={() => setSimulationMode(!simulationMode)}
+                  >
+                    SIMULATION: {simulationMode ? "ON" : "OFF"}
+                  </button>
+                  <button 
+                    className={isPlaying ? "btn-primary" : "btn-secondary"} 
+                    style={{ flex: 1, padding: '5px', fontSize: '10px' }}
+                    onClick={() => setIsPlaying(!isPlaying)}
+                    disabled={!simulationMode}
+                  >
+                    {isPlaying ? "PAUSE" : "PLAY"}
+                  </button>
+                </div>
+                
                 <div style={{ marginTop: '10px', fontSize: '10px', display: 'flex', gap: '10px' }}>
                   <div style={{ color: '#ffffff' }}>■ 5-Axis Perimeter (Rainbow)</div>
                   <div style={{ color: '#ff8c00' }}>■ 3-Axis Infill (Solid Orange)</div>
@@ -588,43 +680,49 @@ function App() {
             <directionalLight position={[20, 20, 30]} intensity={1.5} castShadow shadow-mapSize={[1024, 1024]} />
             <directionalLight position={[-20, -20, 10]} intensity={0.5} />
             
-            <mesh position={[0, 0, -2.5]} receiveShadow>
-              <boxGeometry args={[250, 250, 5]} />
-              <meshStandardMaterial color="#3a3a3a" roughness={0.8} metalness={0.2} />
-            </mesh>
+            <Nozzle visible={simulationMode} />
             
-            <gridHelper 
-              args={[250, 25, 0x39ff14, 0x1f6b1f]} 
-              rotation={[Math.PI / 2, 0, 0]} 
-              position={[0, 0, 0.01]} 
-            />
-            
-            <TransformControls 
-              mode={transformMode as any}
-              showZ={transformMode !== 'translate'} // Hide Z arrow for move mode (since it snaps to bed)
-              position={[posX, posY, 0]}
-              rotation={[rotX * Math.PI / 180, rotY * Math.PI / 180, rotZ * Math.PI / 180]}
-              scale={[modelScale, modelScale, modelScale]}
-              onMouseUp={(e: any) => {
-                if (e.target.object) {
-                  const obj = e.target.object;
-                  setPosX(Number(obj.position.x.toFixed(2)));
-                  setPosY(Number(obj.position.y.toFixed(2)));
-                  setRotX(Number((obj.rotation.x * 180 / Math.PI).toFixed(2)));
-                  setRotY(Number((obj.rotation.y * 180 / Math.PI).toFixed(2)));
-                  setRotZ(Number((obj.rotation.z * 180 / Math.PI).toFixed(2)));
-                  setModelScale(Number(obj.scale.x.toFixed(2)));
-                }
-              }}
-            >
-              <mesh visible={false}>
-                <boxGeometry args={[50, 50, 50]} />
-                <meshBasicMaterial />
+            <KinematicGroup points={toolpathPoints} progress={previewProgress} simulationMode={simulationMode} isPlaying={isPlaying} setPreviewProgress={setPreviewProgress}>
+              <mesh position={[0, 0, -2.5]} receiveShadow>
+                <boxGeometry args={[250, 250, 5]} />
+                <meshStandardMaterial color="#3a3a3a" roughness={0.8} metalness={0.2} />
               </mesh>
-            </TransformControls>
-            
-            <StlModel geometry={stlGeometry} modelScale={modelScale} rotX={rotX} rotY={rotY} rotZ={rotZ} posX={posX} posY={posY} />
-            <Toolpath points={toolpathPoints} progress={previewProgress} maxVisibleLayer={maxVisibleLayer} isolateLayer={isolateLayer} />
+              
+              <gridHelper 
+                args={[250, 25, 0x39ff14, 0x1f6b1f]} 
+                rotation={[Math.PI / 2, 0, 0]} 
+                position={[0, 0, 0.01]} 
+              />
+              
+              {!simulationMode && (
+                <TransformControls 
+                  mode={transformMode as any}
+                  showZ={transformMode !== 'translate'} // Hide Z arrow for move mode (since it snaps to bed)
+                  position={[posX, posY, 0]}
+                  rotation={[rotX * Math.PI / 180, rotY * Math.PI / 180, rotZ * Math.PI / 180]}
+                  scale={[modelScale, modelScale, modelScale]}
+                  onMouseUp={(e: any) => {
+                    if (e.target.object) {
+                      const obj = e.target.object;
+                      setPosX(Number(obj.position.x.toFixed(2)));
+                      setPosY(Number(obj.position.y.toFixed(2)));
+                      setRotX(Number((obj.rotation.x * 180 / Math.PI).toFixed(2)));
+                      setRotY(Number((obj.rotation.y * 180 / Math.PI).toFixed(2)));
+                      setRotZ(Number((obj.rotation.z * 180 / Math.PI).toFixed(2)));
+                      setModelScale(Number(obj.scale.x.toFixed(2)));
+                    }
+                  }}
+                >
+                  <mesh visible={false}>
+                    <boxGeometry args={[50, 50, 50]} />
+                    <meshBasicMaterial />
+                  </mesh>
+                </TransformControls>
+              )}
+              
+              <StlModel geometry={stlGeometry} modelScale={modelScale} rotX={rotX} rotY={rotY} rotZ={rotZ} posX={posX} posY={posY} />
+              <Toolpath points={toolpathPoints} progress={previewProgress} maxVisibleLayer={maxVisibleLayer} isolateLayer={isolateLayer} />
+            </KinematicGroup>
             
             <CameraResetter isResetting={isResettingCamera} setIsResetting={setIsResettingCamera} controlsRef={controlsRef} />
             <OrbitControls ref={controlsRef} makeDefault onStart={() => setIsResettingCamera(false)} />

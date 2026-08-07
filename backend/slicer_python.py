@@ -534,6 +534,9 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         "x": array.array('f'),
         "y": array.array('f'),
         "z": array.array('f'),
+        "nx": array.array('f'),
+        "ny": array.array('f'),
+        "nz": array.array('f'),
         "layer": array.array('H'),
         "type": array.array('B')
     }
@@ -561,6 +564,9 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         points_json["x"].append(px)
         points_json["y"].append(py)
         points_json["z"].append(pz)
+        points_json["nx"].append(nx)
+        points_json["ny"].append(ny)
+        points_json["nz"].append(nz)
         points_json["layer"].append(layer)
         points_json["type"].append(0 if ptype == "perimeter" else 1)
         
