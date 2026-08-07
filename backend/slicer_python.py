@@ -254,7 +254,7 @@ def generate_infill(segments, min_x, max_x, min_y, max_y, line_width, pattern="l
             
     return infill_lines
                 
-def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0, infill_pattern="lines"):
+def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0, infill_pattern="lines", support_enabled=True, support_angle=45.0, support_density=15.0, support_z_gap=0.2, auto_segment_threshold=5.0):
     original_triangles, min_b, max_b = load_stl(file_bytes, model_scale, rot_x, rot_y, rot_z, pos_x, pos_y)
     
     processed_triangles = []
@@ -361,7 +361,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     t_min_z = min_z
     
     if auto_segment:
-        overhangs = [t for t in original_triangles if t[11] < -0.5 and min(t[2], t[5], t[8]) > min_z + 15.0]
+        overhangs = [t for t in original_triangles if t[11] < -0.5 and min(t[2], t[5], t[8]) > min_z + auto_segment_threshold]
         if overhangs:
             lowest_z = min(min(t[2], t[5], t[8]) for t in overhangs)
             calc_z_cutoff = max(min_z + 2.0, lowest_z - 2.0)
@@ -400,6 +400,118 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         dist_max_z = max(dist_max_z, t_max)
         
         distorted_triangles.append((t_min, t_max, v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
+        
+    def generate_support(segments, min_x, max_x, min_y, max_y, line_width, prev_segments, support_angle, support_density, layer_idx):
+        """Generate support structure where current layer overhangs previous layer"""
+        if not prev_segments or layer_idx == 0:
+            return []
+            
+        support_lines = []
+        support_spacing = line_width / (support_density / 100.0) if support_density > 0.1 else 1e9
+        
+        def get_segment_bounds(seg):
+            p1, p2 = seg[0], seg[1]
+            return (min(p1[0], p2[0]), max(p1[0], p2[0]), min(p1[1], p2[1]), max(p1[1], p2[1]))
+        
+        # Build polygons from prev_segments (closed loops)
+        prev_loops = []
+        pt_map = {}
+        
+        def get_key(pt):
+            return (round(pt[0], 3), round(pt[1], 3))
+            
+        for i, seg in enumerate(prev_segments):
+            k0 = get_key(seg[0])
+            k1 = get_key(seg[1])
+            if k0 not in pt_map: pt_map[k0] = []
+            if k1 not in pt_map: pt_map[k1] = []
+            pt_map[k0].append(i)
+            pt_map[k1].append(i)
+            
+        used = set()
+        for start_idx in range(len(prev_segments)):
+            if start_idx in used: continue
+            
+            current_loop = [prev_segments[start_idx]]
+            used.add(start_idx)
+            last_k = get_key(prev_segments[start_idx][1])
+            
+            while True:
+                found = False
+                if last_k in pt_map:
+                    for next_idx in pt_map[last_k]:
+                        if next_idx not in used:
+                            seg = prev_segments[next_idx]
+                            used.add(next_idx)
+                            k0 = get_key(seg[0])
+                            k1 = get_key(seg[1])
+                            
+                            if k0 == last_k:
+                                current_loop.append(seg)
+                                last_k = k1
+                            else:
+                                current_loop.append((seg[1], seg[0], seg[2], seg[3], seg[4]))
+                                last_k = k0
+                            found = True
+                            break
+                if not found: break
+            if len(current_loop) >= 3:
+                # Extract polygon vertices
+                poly_pts = [current_loop[0][0]]
+                for seg in current_loop: poly_pts.append(seg[1])
+                prev_loops.append(poly_pts)
+        
+        def point_in_polygon(x, y, poly):
+            """Ray casting algorithm for point in polygon"""
+            inside = False
+            n = len(poly)
+            for i in range(n):
+                j = (i + 1) % n
+                xi, yi = poly[i]
+                xj, yj = poly[j]
+                if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+                    inside = not inside
+            return inside
+        
+        def point_in_prev_layer(x, y):
+            for poly in prev_loops:
+                if point_in_polygon(x, y, poly):
+                    return True
+            return False
+        
+        v_start = min_y
+        v_end = max_y
+        v = v_start
+        idx = 0
+        while v <= v_end:
+            intersects = []
+            for seg in segments:
+                p1, p2 = seg[0], seg[1]
+                if (p1[1] <= v < p2[1]) or (p2[1] <= v < p1[1]):
+                    t = (v - p1[1]) / (p2[1] - p1[1])
+                    ix = p1[0] + t * (p2[0] - p1[0])
+                    intersects.append(ix)
+            intersects.sort()
+            
+            line_pts = []
+            for i in range(0, len(intersects)-1, 2):
+                v0 = intersects[i]
+                v1 = intersects[i+1]
+                
+                mid_x = (v0 + v1) / 2.0
+                if not point_in_prev_layer(mid_x, v):
+                    if idx % 2 != 0:
+                        line_pts.extend([(v1, v), (v0, v)])
+                    else:
+                        line_pts.extend([(v0, v), (v1, v)])
+                        
+            if line_pts:
+                support_lines.extend(line_pts)
+                
+            v += support_spacing
+            idx += 1
+            
+        return support_lines
         
     def resample_polyline(pts, max_len=0.5):
         if not pts: return []
@@ -462,6 +574,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         if current_chunk: chunks.append(current_chunk)
         return chunks
     
+    prev_segments = None
     path, layer_idx, path_id = [], 0, 0
     z_buckets = {}
     for t in distorted_triangles:
@@ -485,6 +598,16 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 for pt in chunk:
                     nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
                     path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "perimeter", path_id))
+        if support_enabled and prev_segments is not None:
+            support_pts = generate_support(segments, min_x, max_x, min_y, max_y, line_width, prev_segments, support_angle, support_density, layer_idx)
+            for i in range(0, len(support_pts), 2):
+                if i + 1 < len(support_pts):
+                    resampled = resample_polyline([support_pts[i], support_pts[i+1]])
+                    chunks = clip_polyline(resampled, z, False, True)
+                    for chunk in chunks:
+                        path_id += 1
+                        for pt in chunk:
+                            path.append((pt[0], pt[1], pt[2], 0.0, 0.0, -1.0, layer_idx, "support", path_id))
         infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
         for i in range(0, len(infill_pts), 2):
             resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
@@ -494,6 +617,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 for pt in chunk:
                     nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
                     path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "infill", path_id))
+        prev_segments = segments
         z += layer_height; layer_idx += 1
         
     if calc_z_cutoff != 1e9:
@@ -519,6 +643,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             for l in range(int(math.floor(t[0] / layer_height)), int(math.floor(t[1] / layer_height)) + 1):
                 tilt_z_buckets.setdefault(l, []).append(t)
         z = tilted_min_z + layer_height
+        tilted_prev_segments = None
         while z <= tilted_max_z:
             l_idx = int(math.floor(z / layer_height))
             segments = get_z_slice_segments([t for t in tilt_z_buckets.get(l_idx, []) if t[0] <= z and t[1] >= z], z)
@@ -533,6 +658,16 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     path_id += 1
                     for pt in chunk:
                         path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
+            if support_enabled and tilted_prev_segments is not None:
+                support_pts = generate_support(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, line_width, tilted_prev_segments, support_angle, support_density, layer_idx)
+                for i in range(0, len(support_pts), 2):
+                    if i + 1 < len(support_pts):
+                        resampled = resample_polyline([support_pts[i], support_pts[i+1]])
+                        chunks = clip_polyline(resampled, z, True, False)
+                        for chunk in chunks:
+                            path_id += 1
+                            for pt in chunk:
+                                path.append((pt[0], pt[1], pt[2], 0.0, 0.0, -1.0, layer_idx, "support", path_id))
             infill_pts = generate_infill(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, infill_spacing, infill_pattern, layer_idx)
             for i in range(0, len(infill_pts), 2):
                 resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
@@ -541,6 +676,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     path_id += 1
                     for pt in chunk:
                         path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill", path_id))
+            tilted_prev_segments = segments
             z += layer_height; layer_idx += 1
             
     if not path:
@@ -583,7 +719,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         points_json["ny"].append(ny)
         points_json["nz"].append(nz)
         points_json["layer"].append(layer)
-        points_json["type"].append(0 if ptype == "perimeter" else 1)
+        points_json["type"].append(0 if ptype == "perimeter" else (2 if ptype == "support" else 1))
         
         v_rad = math.atan2(nx, ny)
         xy_mag = math.sqrt(nx*nx + ny*ny)

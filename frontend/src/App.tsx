@@ -263,6 +263,11 @@ function App() {
   const [posY, setPosY] = useState(0);
   const [transformMode, setTransformMode] = useState("translate");
   const [autoSegment, setAutoSegment] = useState(false);
+  const [autoSegmentThreshold, setAutoSegmentThreshold] = useState(5);
+  const [supportEnabled, setSupportEnabled] = useState(true);
+  const [supportAngle, setSupportAngle] = useState(45);
+  const [supportDensity, setSupportDensity] = useState(15);
+  const [supportZGap, setSupportZGap] = useState(0.2);
   const [segmentInfo, setSegmentInfo] = useState<any>(null);
   const [isolateLayer, setIsolateLayer] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -332,23 +337,28 @@ function App() {
     setSegmentInfo(null);
     setPreviewProgress(100);
     
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("line_width", "0.4");
-      formData.append("bed_center_z", "50.0");
-      formData.append("layer_height", layerHeight.toString());
-      formData.append("wave_amplitude", waveAmplitude.toString());
-      formData.append("wave_frequency", waveFrequency.toString());
-      formData.append("infill_density", infillDensity.toString());
-      formData.append("infill_pattern", infillPattern);
-      formData.append("auto_segment", autoSegment ? "true" : "false");
-      formData.append("model_scale", modelScale.toString());
-      formData.append("rot_x", rotX.toString());
-      formData.append("rot_y", rotY.toString());
-      formData.append("rot_z", rotZ.toString());
-      formData.append("pos_x", posX.toString());
-      formData.append("pos_y", posY.toString());
+try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("line_width", "0.4");
+        formData.append("bed_center_z", "50.0");
+        formData.append("layer_height", layerHeight.toString());
+        formData.append("wave_amplitude", waveAmplitude.toString());
+        formData.append("wave_frequency", waveFrequency.toString());
+        formData.append("infill_density", infillDensity.toString());
+        formData.append("infill_pattern", infillPattern);
+        formData.append("auto_segment", autoSegment ? "true" : "false");
+        formData.append("model_scale", modelScale.toString());
+        formData.append("rot_x", rotX.toString());
+        formData.append("rot_y", rotY.toString());
+        formData.append("rot_z", rotZ.toString());
+        formData.append("pos_x", posX.toString());
+        formData.append("pos_y", posY.toString());
+        formData.append("support_enabled", supportEnabled ? "true" : "false");
+        formData.append("support_angle", supportAngle.toString());
+        formData.append("support_density", supportDensity.toString());
+        formData.append("support_z_gap", supportZGap.toString());
+        formData.append("auto_segment_threshold", autoSegmentThreshold.toString());
       
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await axios.post(`${apiUrl}/slice_stl`, formData, {
@@ -554,7 +564,75 @@ function App() {
               />
               <label htmlFor="autoSegment" style={{ color: '#39ff14', cursor: 'pointer', fontWeight: 'bold' }}>AUTO-SEGMENT OVERHANGS</label>
             </div>
-            
+
+            {autoSegment && (
+              <div className="input-row" style={{ marginTop: '10px' }}>
+                <label>AUTO-SEGMENT THRESHOLD (mm)</label>
+                <input 
+                  type="number" 
+                  className="terminal-input"
+                  step="1" 
+                  min="0"
+                  max="50"
+                  value={autoSegmentThreshold} 
+                  onChange={e => setAutoSegmentThreshold(parseInt(e.target.value))} 
+                />
+              </div>
+            )}
+
+            <div className="input-row" style={{ marginTop: '10px', borderTop: '1px solid rgba(31,107,31,0.4)', paddingTop: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <input 
+                type="checkbox" 
+                id="supportEnabled" 
+                checked={supportEnabled}
+                onChange={(e) => setSupportEnabled(e.target.checked)}
+              />
+              <label htmlFor="supportEnabled" style={{ color: '#39ff14', cursor: 'pointer', fontWeight: 'bold' }}>GENERATE SUPPORTS</label>
+            </div>
+
+            {supportEnabled && (
+              <>
+                <div className="input-row" style={{ marginTop: '10px' }}>
+                  <label>SUPPORT ANGLE (deg)</label>
+                  <input 
+                    type="number" 
+                    className="terminal-input"
+                    step="5" 
+                    min="0"
+                    max="90"
+                    value={supportAngle} 
+                    onChange={e => setSupportAngle(parseInt(e.target.value))} 
+                  />
+                </div>
+                
+                <div className="input-row" style={{ marginTop: '10px' }}>
+                  <label>SUPPORT DENSITY (%)</label>
+                  <input 
+                    type="number" 
+                    className="terminal-input"
+                    step="5" 
+                    min="0"
+                    max="100"
+                    value={supportDensity} 
+                    onChange={e => setSupportDensity(parseInt(e.target.value))} 
+                  />
+                </div>
+                
+                <div className="input-row" style={{ marginTop: '10px' }}>
+                  <label>SUPPORT Z-GAP (mm)</label>
+                  <input 
+                    type="number" 
+                    className="terminal-input"
+                    step="0.1" 
+                    min="0"
+                    max="1.0"
+                    value={supportZGap} 
+                    onChange={e => setSupportZGap(parseFloat(e.target.value))} 
+                  />
+                </div>
+              </>
+            )}
+
             {segmentInfo && segmentInfo.auto_segment && (
               <div style={{ marginTop: '10px', fontSize: '11px', color: '#ff8c00', backgroundColor: '#111', padding: '8px', border: '1px solid #1f6b1f' }}>
                 <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>ANALYSIS RESULTS:</div>

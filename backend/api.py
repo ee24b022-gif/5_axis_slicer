@@ -36,7 +36,12 @@ async def slice_stl_endpoint(
     rot_z: float = Form(0.0),
     pos_x: float = Form(0.0),
     pos_y: float = Form(0.0),
-    infill_pattern: str = Form("lines")
+    infill_pattern: str = Form("lines"),
+    support_enabled: bool = Form(True),
+    support_angle: float = Form(45.0),
+    support_density: float = Form(15.0),
+    support_z_gap: float = Form(0.2),
+    auto_segment_threshold: float = Form(5.0)
 ):
     try:
         contents = await file.read()
@@ -59,7 +64,12 @@ async def slice_stl_endpoint(
             rot_z,
             pos_x,
             pos_y,
-            infill_pattern
+            infill_pattern,
+            support_enabled,
+            support_angle,
+            support_density,
+            support_z_gap,
+            auto_segment_threshold
         )
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
