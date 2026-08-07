@@ -360,13 +360,38 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     calc_segment_tilt = 0.0
     t_min_z = min_z
     
+    # Auto-segment: split model into BASE (printed flat) and OVERHANG (printed tilted)
+    base_triangles = None
+    overhang_triangles = None
+    calc_z_cutoff = 1e9
+    
     if auto_segment:
+        # Find overhang faces (normal pointing down, high enough)
         overhangs = [t for t in original_triangles if t[11] < -0.5 and min(t[2], t[5], t[8]) > min_z + auto_segment_threshold]
         if overhangs:
-            lowest_z = min(min(t[2], t[5], t[8]) for t in overhangs)
-            calc_z_cutoff = max(min_z + 2.0, lowest_z - 2.0)
+            lowest_overhang_z = min(min(t[2], t[5], t[8]) for t in overhangs)
+            calc_z_cutoff = max(min_z + 2.0, lowest_overhang_z - 2.0)
             avg_ny = sum(t[10] for t in overhangs) / len(overhangs)
             calc_segment_tilt = -45.0 if avg_ny > 0 else 45.0
+            
+            # SPLIT triangles: base (below cutoff) vs overhang (above cutoff)
+            base_triangles = []
+            overhang_triangles = []
+            for t in original_triangles:
+                tri_max_z = max(t[2], t[5], t[8])
+                tri_min_z = min(t[2], t[5], t[8])
+                if tri_max_z <= calc_z_cutoff:
+                    # Entirely below cutoff -> base
+                    base_triangles.append(t)
+                elif tri_min_z >= calc_z_cutoff:
+                    # Entirely above cutoff -> overhang
+                    overhang_triangles.append(t)
+                else:
+                    # Crosses cutoff -> split by clipping (add to both for safety)
+                    base_triangles.append(t)
+                    overhang_triangles.append(t)
+            
+            print(f"AUTO-SEGMENT: z_cutoff={calc_z_cutoff:.1f}, tilt={calc_segment_tilt:.1f}°, base_tris={len(base_triangles)}, overhang_tris={len(overhang_triangles)}")
             
     if (max_x - min_x) > 500.0 or (max_y - min_y) > 500.0:
         return {"error": "Model is too large (>500mm). Scale down your STL to millimeters."}
@@ -380,11 +405,30 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         
     if calc_z_cutoff != 1e9: calc_z_cutoff -= t_min_z
     
-    distorted_triangles = []
-    dist_min_z = 1e9
-    dist_max_z = -1e9
+    # Build triangle lists for slicing
+    if auto_segment and base_triangles is not None and overhang_triangles is not None:
+        # Transform base triangles
+        base_transformed = [list(t) for t in base_triangles]
+        for tri in base_transformed:
+            tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
+        
+        # Transform overhang triangles
+        overhang_transformed = [list(t) for t in overhang_triangles]
+        for tri in overhang_transformed:
+            tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
+    else:
+        # No auto-segment: use all triangles
+        base_transformed = [list(t) for t in subdivided_triangles]
+        for tri in base_transformed:
+            tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
+        overhang_transformed = []
     
-    for tri in transformed_triangles:
+    # Build distorted triangles for BASE (printed flat)
+    base_distorted = []
+    base_min_z = 1e9
+    base_max_z = -1e9
+    
+    for tri in base_transformed:
         v0x, v0y, v0z = tri[0], tri[1], tri[2]
         v1x, v1y, v1z = tri[3], tri[4], tri[5]
         v2x, v2y, v2z = tri[6], tri[7], tri[8]
@@ -396,10 +440,42 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         t_min = min(dv0z, dv1z, dv2z)
         t_max = max(dv0z, dv1z, dv2z)
         
-        dist_min_z = min(dist_min_z, t_min)
-        dist_max_z = max(dist_max_z, t_max)
+        base_min_z = min(base_min_z, t_min)
+        base_max_z = max(base_max_z, t_max)
         
-        distorted_triangles.append((t_min, t_max, v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
+        base_distorted.append((t_min, t_max, v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
+    
+    # Build distorted triangles for OVERHANG (will be rotated)
+    overhang_distorted = []
+    overhang_min_z = 1e9
+    overhang_max_z = -1e9
+    
+    for tri in overhang_transformed:
+        v0x, v0y, v0z = tri[0], tri[1], tri[2]
+        v1x, v1y, v1z = tri[3], tri[4], tri[5]
+        v2x, v2y, v2z = tri[6], tri[7], tri[8]
+        
+        dv0z = distort_mesh_z(v0x, v0y, v0z)
+        dv1z = distort_mesh_z(v1x, v1y, v1z)
+        dv2z = distort_mesh_z(v2x, v2y, v2z)
+        
+        t_min = min(dv0z, dv1z, dv2z)
+        t_max = max(dv0z, dv1z, dv2z)
+        
+        overhang_min_z = min(overhang_min_z, t_min)
+        overhang_max_z = max(overhang_max_z, t_max)
+        
+        overhang_distorted.append((t_min, t_max, v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
+    
+    # For non-auto-segment, use base_distorted as the main set
+    if not auto_segment:
+        distorted_triangles = base_distorted
+        dist_min_z = base_min_z
+        dist_max_z = base_max_z
+    else:
+        distorted_triangles = base_distorted  # Phase 1: base only
+        dist_min_z = base_min_z
+        dist_max_z = base_max_z
         
     def generate_support(segments, min_x, max_x, min_y, max_y, line_width, prev_segments, support_angle, support_density, layer_idx):
         """Generate support structure where current layer overhangs previous layer"""
@@ -619,29 +695,34 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "infill", path_id))
         prev_segments = segments
         z += layer_height; layer_idx += 1
-        
-    if calc_z_cutoff != 1e9:
+    
+    # PHASE 2: Print overhang with tilted bed (only if auto_segment enabled)
+    if auto_segment and overhang_distorted:
         c, s = math.cos(calc_segment_tilt * math.pi / 180.0), math.sin(calc_segment_tilt * math.pi / 180.0)
         cz = calc_z_cutoff
         def rotate_pt(px, py, pz): return (px, py * c - (pz - cz) * s, py * s + (pz - cz) * c + cz)
         def inverse_rotate_pt(px, py, pz): return (px, py * c + (pz - cz) * s, -py * s + (pz - cz) * c + cz)
+        
+        # Rotate overhang triangles
         tilted_triangles = []
         tilted_min_z, tilted_max_z = 1e9, -1e9
         tilted_min_x, tilted_max_x = 1e9, -1e9
         tilted_min_y, tilted_max_y = 1e9, -1e9
-        for t in distorted_triangles:
-            if t[1] < calc_z_cutoff: continue
+        
+        for t in overhang_distorted:
             rv0, rv1, rv2 = rotate_pt(t[2], t[3], t[4]), rotate_pt(t[5], t[6], t[7]), rotate_pt(t[8], t[9], t[10])
             t_min, t_max = min(rv0[2], rv1[2], rv2[2]), max(rv0[2], rv1[2], rv2[2])
             tilted_min_z, tilted_max_z = min(tilted_min_z, t_min), max(tilted_max_z, t_max)
             tilted_min_x, tilted_max_x = min(tilted_min_x, rv0[0], rv1[0], rv2[0]), max(tilted_max_x, rv0[0], rv1[0], rv2[0])
             tilted_min_y, tilted_max_y = min(tilted_min_y, rv0[1], rv1[1], rv2[1]), max(tilted_max_y, rv0[1], rv1[1], rv2[1])
             tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], t[11], t[12] * c - t[13] * s, t[12] * s + t[13] * c))
+        
         tilt_nx, tilt_ny, tilt_nz = 0.0, s, c
         tilt_z_buckets = {}
         for t in tilted_triangles:
             for l in range(int(math.floor(t[0] / layer_height)), int(math.floor(t[1] / layer_height)) + 1):
                 tilt_z_buckets.setdefault(l, []).append(t)
+        
         z = tilted_min_z + layer_height
         tilted_prev_segments = None
         while z <= tilted_max_z:
