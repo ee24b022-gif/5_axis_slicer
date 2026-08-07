@@ -277,7 +277,8 @@ function App() {
   const [totalLayers, setTotalLayers] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [status, setStatus] = useState<string>('SYSTEM_READY');
-  
+  const [simulationMode, setSimulationMode] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const controlsRef = useRef<any>(null);
 
