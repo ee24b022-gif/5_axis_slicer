@@ -82,19 +82,21 @@ async def slice_stl_endpoint(
                 
                 # 2. Toolpath Points (Array streaming)
                 pts = result["toolpath_points"]
-                for key, arr in pts.items():
+                keys = list(pts.keys())
+                for i_k, key in enumerate(keys):
+                    arr = pts[key]
                     yield f'"{key}": ['
                     chunk_size = 5000
                     for i in range(0, len(arr), chunk_size):
                         chunk = arr[i:i+chunk_size]
-                        if key in ('x', 'y', 'z'):
+                        if key in ('x', 'y', 'z', 'nx', 'ny', 'nz'):
                             s = ",".join(f"{v:.2f}" for v in chunk)
                         else:
                             s = ",".join(str(v) for v in chunk)
                         if i > 0 and s: yield ","
                         yield s
                     yield ']'
-                    if key != "type": yield ','
+                    if i_k < len(keys) - 1: yield ','
                 yield '}, "gcode": "'
                 
                 # 3. GCode streaming
