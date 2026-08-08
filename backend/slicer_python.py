@@ -4,6 +4,28 @@ import json
 import array
 import tempfile
 
+
+class BranchNode:
+    def __init__(self, pt):
+        self.pt = pt
+        self.children = []
+        self.depth = 0
+
+class Branch:
+    def __init__(self):
+        self.pts = []
+
+def point_in_polygon(x, y, poly):
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        j = (i + 1) % n
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+    return inside
+
 class BVHNode:
     __slots__ = ['min_x', 'min_y', 'min_z', 'max_x', 'max_y', 'max_z', 'left', 'right', 'first', 'count']
     def __init__(self):
@@ -360,406 +382,10 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     calc_segment_tilt = 0.0
     t_min_z = min_z
     
-    # Auto-segment: split model into BASE (printed flat) and OVERHANG (printed tilted)
-    base_triangles = None
-    overhang_triangles = None
-    calc_z_cutoff = 1e9
+
+    # Skeleton-driven conformal slicing
+    path = slice_skeleton_mesh_inner(original_triangles, layer_height, infill_density, infill_pattern)
     
-    if auto_segment:
-        # Find overhang faces (normal pointing down, high enough)
-        overhangs = [t for t in original_triangles if t[11] < -0.5 and min(t[2], t[5], t[8]) > min_z + auto_segment_threshold]
-        if overhangs:
-            lowest_overhang_z = min(min(t[2], t[5], t[8]) for t in overhangs)
-            calc_z_cutoff = max(min_z + 2.0, lowest_overhang_z - 2.0)
-            avg_ny = sum(t[10] for t in overhangs) / len(overhangs)
-            calc_segment_tilt = -45.0 if avg_ny > 0 else 45.0
-            
-            # SPLIT triangles: base (below cutoff) vs overhang (above cutoff)
-            base_triangles = []
-            overhang_triangles = []
-            for t in original_triangles:
-                tri_max_z = max(t[2], t[5], t[8])
-                tri_min_z = min(t[2], t[5], t[8])
-                if tri_max_z <= calc_z_cutoff:
-                    # Entirely below cutoff -> base
-                    base_triangles.append(t)
-                elif tri_min_z >= calc_z_cutoff:
-                    # Entirely above cutoff -> overhang
-                    overhang_triangles.append(t)
-                else:
-                    # Crosses cutoff -> split by clipping (add to both for safety)
-                    base_triangles.append(t)
-                    overhang_triangles.append(t)
-            
-            print(f"AUTO-SEGMENT: z_cutoff={calc_z_cutoff:.1f}, tilt={calc_segment_tilt:.1f}°, base_tris={len(base_triangles)}, overhang_tris={len(overhang_triangles)}")
-            
-    if (max_x - min_x) > 500.0 or (max_y - min_y) > 500.0:
-        return {"error": "Model is too large (>500mm). Scale down your STL to millimeters."}
-        
-    line_width = 0.4
-    infill_spacing = line_width / (infill_density / 100.0) if infill_density > 0.1 else 1e9
-    
-    transformed_triangles = [list(t) for t in subdivided_triangles]
-    for tri in transformed_triangles:
-        tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
-        
-    if calc_z_cutoff != 1e9: calc_z_cutoff -= t_min_z
-    
-    # Build triangle lists for slicing
-    if auto_segment and base_triangles is not None and overhang_triangles is not None:
-        # Transform base triangles
-        base_transformed = [list(t) for t in base_triangles]
-        for tri in base_transformed:
-            tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
-        
-        # Transform overhang triangles
-        overhang_transformed = [list(t) for t in overhang_triangles]
-        for tri in overhang_transformed:
-            tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
-    else:
-        # No auto-segment: use all triangles
-        base_transformed = [list(t) for t in subdivided_triangles]
-        for tri in base_transformed:
-            tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
-        overhang_transformed = []
-    
-    # Build distorted triangles for BASE (printed flat)
-    base_distorted = []
-    base_min_z = 1e9
-    base_max_z = -1e9
-    
-    for tri in base_transformed:
-        v0x, v0y, v0z = tri[0], tri[1], tri[2]
-        v1x, v1y, v1z = tri[3], tri[4], tri[5]
-        v2x, v2y, v2z = tri[6], tri[7], tri[8]
-        
-        dv0z = distort_mesh_z(v0x, v0y, v0z)
-        dv1z = distort_mesh_z(v1x, v1y, v1z)
-        dv2z = distort_mesh_z(v2x, v2y, v2z)
-        
-        t_min = min(dv0z, dv1z, dv2z)
-        t_max = max(dv0z, dv1z, dv2z)
-        
-        base_min_z = min(base_min_z, t_min)
-        base_max_z = max(base_max_z, t_max)
-        
-        base_distorted.append((t_min, t_max, v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
-    
-    # Build distorted triangles for OVERHANG (will be rotated)
-    overhang_distorted = []
-    overhang_min_z = 1e9
-    overhang_max_z = -1e9
-    
-    for tri in overhang_transformed:
-        v0x, v0y, v0z = tri[0], tri[1], tri[2]
-        v1x, v1y, v1z = tri[3], tri[4], tri[5]
-        v2x, v2y, v2z = tri[6], tri[7], tri[8]
-        
-        dv0z = distort_mesh_z(v0x, v0y, v0z)
-        dv1z = distort_mesh_z(v1x, v1y, v1z)
-        dv2z = distort_mesh_z(v2x, v2y, v2z)
-        
-        t_min = min(dv0z, dv1z, dv2z)
-        t_max = max(dv0z, dv1z, dv2z)
-        
-        overhang_min_z = min(overhang_min_z, t_min)
-        overhang_max_z = max(overhang_max_z, t_max)
-        
-        overhang_distorted.append((t_min, t_max, v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
-    
-    # For non-auto-segment, use base_distorted as the main set
-    if not auto_segment:
-        distorted_triangles = base_distorted
-        dist_min_z = base_min_z
-        dist_max_z = base_max_z
-    else:
-        distorted_triangles = base_distorted  # Phase 1: base only
-        dist_min_z = base_min_z
-        dist_max_z = base_max_z
-        
-    def generate_support(segments, min_x, max_x, min_y, max_y, line_width, prev_segments, support_angle, support_density, layer_idx):
-        """Generate support structure where current layer overhangs previous layer"""
-        if not prev_segments or layer_idx == 0:
-            return []
-            
-        support_lines = []
-        support_spacing = line_width / (support_density / 100.0) if support_density > 0.1 else 1e9
-        
-        def get_segment_bounds(seg):
-            p1, p2 = seg[0], seg[1]
-            return (min(p1[0], p2[0]), max(p1[0], p2[0]), min(p1[1], p2[1]), max(p1[1], p2[1]))
-        
-        # Build polygons from prev_segments (closed loops)
-        prev_loops = []
-        pt_map = {}
-        
-        def get_key(pt):
-            return (round(pt[0], 3), round(pt[1], 3))
-            
-        for i, seg in enumerate(prev_segments):
-            k0 = get_key(seg[0])
-            k1 = get_key(seg[1])
-            if k0 not in pt_map: pt_map[k0] = []
-            if k1 not in pt_map: pt_map[k1] = []
-            pt_map[k0].append(i)
-            pt_map[k1].append(i)
-            
-        used = set()
-        for start_idx in range(len(prev_segments)):
-            if start_idx in used: continue
-            
-            current_loop = [prev_segments[start_idx]]
-            used.add(start_idx)
-            last_k = get_key(prev_segments[start_idx][1])
-            
-            while True:
-                found = False
-                if last_k in pt_map:
-                    for next_idx in pt_map[last_k]:
-                        if next_idx not in used:
-                            seg = prev_segments[next_idx]
-                            used.add(next_idx)
-                            k0 = get_key(seg[0])
-                            k1 = get_key(seg[1])
-                            
-                            if k0 == last_k:
-                                current_loop.append(seg)
-                                last_k = k1
-                            else:
-                                current_loop.append((seg[1], seg[0], seg[2], seg[3], seg[4]))
-                                last_k = k0
-                            found = True
-                            break
-                if not found: break
-            if len(current_loop) >= 3:
-                # Extract polygon vertices
-                poly_pts = [current_loop[0][0]]
-                for seg in current_loop: poly_pts.append(seg[1])
-                prev_loops.append(poly_pts)
-        
-        def point_in_polygon(x, y, poly):
-            """Ray casting algorithm for point in polygon"""
-            inside = False
-            n = len(poly)
-            for i in range(n):
-                j = (i + 1) % n
-                xi, yi = poly[i]
-                xj, yj = poly[j]
-                if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
-                    inside = not inside
-            return inside
-        
-        def point_in_prev_layer(x, y):
-            for poly in prev_loops:
-                if point_in_polygon(x, y, poly):
-                    return True
-            return False
-        
-        v_start = min_y
-        v_end = max_y
-        v = v_start
-        idx = 0
-        while v <= v_end:
-            intersects = []
-            for seg in segments:
-                p1, p2 = seg[0], seg[1]
-                if (p1[1] <= v < p2[1]) or (p2[1] <= v < p1[1]):
-                    t = (v - p1[1]) / (p2[1] - p1[1])
-                    ix = p1[0] + t * (p2[0] - p1[0])
-                    intersects.append(ix)
-            intersects.sort()
-            
-            line_pts = []
-            for i in range(0, len(intersects)-1, 2):
-                v0 = intersects[i]
-                v1 = intersects[i+1]
-                
-                mid_x = (v0 + v1) / 2.0
-                if not point_in_prev_layer(mid_x, v):
-                    if idx % 2 != 0:
-                        line_pts.extend([(v1, v), (v0, v)])
-                    else:
-                        line_pts.extend([(v0, v), (v1, v)])
-                        
-            if line_pts:
-                support_lines.extend(line_pts)
-                
-            v += support_spacing
-            idx += 1
-            
-        return support_lines
-        
-    def resample_polyline(pts, max_len=0.5):
-        if not pts: return []
-        resampled = [pts[0]]
-        for i in range(len(pts)-1):
-            p1, p2 = pts[i], pts[i+1]
-            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-            d = math.hypot(dx, dy)
-            if d <= max_len:
-                resampled.append(p2)
-                continue
-            n = int(math.ceil(d / max_len))
-            for j in range(1, n + 1):
-                t = j / n
-                resampled.append((p1[0] + dx*t, p1[1] + dy*t))
-        return resampled
-        
-    def clip_polyline(pts, z_base, is_tilted, keep_below):
-        chunks = []
-        current_chunk = []
-        
-        for i in range(len(pts)-1):
-            if is_tilted:
-                orig_x1, orig_y1, orig_z1 = inverse_rotate_pt(pts[i][0], pts[i][1], z_base)
-                z1 = distort_toolpath_z(orig_x1, orig_y1, orig_z1)
-                orig_x2, orig_y2, orig_z2 = inverse_rotate_pt(pts[i+1][0], pts[i+1][1], z_base)
-                z2 = distort_toolpath_z(orig_x2, orig_y2, orig_z2)
-                p1_out = (orig_x1, orig_y1, z1)
-                p2_out = (orig_x2, orig_y2, z2)
-            else:
-                z1 = distort_toolpath_z(pts[i][0], pts[i][1], z_base)
-                z2 = distort_toolpath_z(pts[i+1][0], pts[i+1][1], z_base)
-                p1_out = (pts[i][0], pts[i][1], z1)
-                p2_out = (pts[i+1][0], pts[i+1][1], z2)
-                
-            def is_valid(z): return z <= calc_z_cutoff + 1e-4 if keep_below else z >= calc_z_cutoff - 1e-4
-            
-            v1, v2 = is_valid(z1), is_valid(z2)
-            
-            if v1 and v2:
-                if not current_chunk: current_chunk.append(p1_out)
-                current_chunk.append(p2_out)
-            elif not v1 and not v2:
-                pass
-            else:
-                t = (calc_z_cutoff - z1) / (z2 - z1) if z2 != z1 else 0
-                ix = p1_out[0] + t * (p2_out[0] - p1_out[0])
-                iy = p1_out[1] + t * (p2_out[1] - p1_out[1])
-                i_out = (ix, iy, calc_z_cutoff)
-                
-                if v1:
-                    if not current_chunk: current_chunk.append(p1_out)
-                    current_chunk.append(i_out)
-                    chunks.append(current_chunk)
-                    current_chunk = []
-                else:
-                    current_chunk.append(i_out)
-                    current_chunk.append(p2_out)
-                    
-        if current_chunk: chunks.append(current_chunk)
-        return chunks
-    
-    prev_segments = None
-    path, layer_idx, path_id = [], 0, 0
-    z_buckets = {}
-    for t in distorted_triangles:
-        for l in range(int(math.floor(t[0] / layer_height)), int(math.floor(t[1] / layer_height)) + 1):
-            z_buckets.setdefault(l, []).append(t)
-    
-    z = dist_min_z + layer_height
-    base_loop_max = calc_z_cutoff + wave_amplitude + 0.01 if calc_z_cutoff != 1e9 else dist_max_z
-    while z <= min(dist_max_z, base_loop_max):
-        l_idx = int(math.floor(z / layer_height))
-        segments = get_z_slice_segments([t for t in z_buckets.get(l_idx, []) if t[0] <= z and t[1] >= z], z)
-        if not segments:
-            z += layer_height; layer_idx += 1; continue
-        for loop in chain_segments(segments):
-            pts = [loop[0][0]]
-            for seg in loop: pts.append(seg[1])
-            resampled = resample_polyline(pts)
-            chunks = clip_polyline(resampled, z, False, True)
-            for chunk in chunks:
-                path_id += 1
-                for pt in chunk:
-                    nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
-                    path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "perimeter", path_id))
-        if support_enabled and prev_segments is not None:
-            support_pts = generate_support(segments, min_x, max_x, min_y, max_y, line_width, prev_segments, support_angle, support_density, layer_idx)
-            for i in range(0, len(support_pts), 2):
-                if i + 1 < len(support_pts):
-                    resampled = resample_polyline([support_pts[i], support_pts[i+1]])
-                    chunks = clip_polyline(resampled, z, False, True)
-                    for chunk in chunks:
-                        path_id += 1
-                        for pt in chunk:
-                            path.append((pt[0], pt[1], pt[2], 0.0, 0.0, -1.0, layer_idx, "support", path_id))
-        infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
-        for i in range(0, len(infill_pts), 2):
-            resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
-            chunks = clip_polyline(resampled, z, False, True)
-            for chunk in chunks:
-                path_id += 1
-                for pt in chunk:
-                    nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
-                    path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "infill", path_id))
-        prev_segments = segments
-        z += layer_height; layer_idx += 1
-    
-    # PHASE 2: Print overhang with tilted bed (only if auto_segment enabled)
-    if auto_segment and overhang_distorted:
-        c, s = math.cos(calc_segment_tilt * math.pi / 180.0), math.sin(calc_segment_tilt * math.pi / 180.0)
-        cz = calc_z_cutoff
-        def rotate_pt(px, py, pz): return (px, py * c - (pz - cz) * s, py * s + (pz - cz) * c + cz)
-        def inverse_rotate_pt(px, py, pz): return (px, py * c + (pz - cz) * s, -py * s + (pz - cz) * c + cz)
-        
-        # Rotate overhang triangles
-        tilted_triangles = []
-        tilted_min_z, tilted_max_z = 1e9, -1e9
-        tilted_min_x, tilted_max_x = 1e9, -1e9
-        tilted_min_y, tilted_max_y = 1e9, -1e9
-        
-        for t in overhang_distorted:
-            rv0, rv1, rv2 = rotate_pt(t[2], t[3], t[4]), rotate_pt(t[5], t[6], t[7]), rotate_pt(t[8], t[9], t[10])
-            t_min, t_max = min(rv0[2], rv1[2], rv2[2]), max(rv0[2], rv1[2], rv2[2])
-            tilted_min_z, tilted_max_z = min(tilted_min_z, t_min), max(tilted_max_z, t_max)
-            tilted_min_x, tilted_max_x = min(tilted_min_x, rv0[0], rv1[0], rv2[0]), max(tilted_max_x, rv0[0], rv1[0], rv2[0])
-            tilted_min_y, tilted_max_y = min(tilted_min_y, rv0[1], rv1[1], rv2[1]), max(tilted_max_y, rv0[1], rv1[1], rv2[1])
-            tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], t[11], t[12] * c - t[13] * s, t[12] * s + t[13] * c))
-        
-        tilt_nx, tilt_ny, tilt_nz = 0.0, s, c
-        tilt_z_buckets = {}
-        for t in tilted_triangles:
-            for l in range(int(math.floor(t[0] / layer_height)), int(math.floor(t[1] / layer_height)) + 1):
-                tilt_z_buckets.setdefault(l, []).append(t)
-        
-        z = tilted_min_z + layer_height
-        tilted_prev_segments = None
-        while z <= tilted_max_z:
-            l_idx = int(math.floor(z / layer_height))
-            segments = get_z_slice_segments([t for t in tilt_z_buckets.get(l_idx, []) if t[0] <= z and t[1] >= z], z)
-            if not segments:
-                z += layer_height; layer_idx += 1; continue
-            for loop in chain_segments(segments):
-                pts = [loop[0][0]]
-                for seg in loop: pts.append(seg[1])
-                resampled = resample_polyline(pts)
-                chunks = clip_polyline(resampled, z, True, False)
-                for chunk in chunks:
-                    path_id += 1
-                    for pt in chunk:
-                        path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
-            if support_enabled and tilted_prev_segments is not None:
-                support_pts = generate_support(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, line_width, tilted_prev_segments, support_angle, support_density, layer_idx)
-                for i in range(0, len(support_pts), 2):
-                    if i + 1 < len(support_pts):
-                        resampled = resample_polyline([support_pts[i], support_pts[i+1]])
-                        chunks = clip_polyline(resampled, z, True, False)
-                        for chunk in chunks:
-                            path_id += 1
-                            for pt in chunk:
-                                path.append((pt[0], pt[1], pt[2], 0.0, 0.0, -1.0, layer_idx, "support", path_id))
-            infill_pts = generate_infill(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, infill_spacing, infill_pattern, layer_idx)
-            for i in range(0, len(infill_pts), 2):
-                resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
-                chunks = clip_polyline(resampled, z, True, False)
-                for chunk in chunks:
-                    path_id += 1
-                    for pt in chunk:
-                        path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill", path_id))
-            tilted_prev_segments = segments
-            z += layer_height; layer_idx += 1
-            
     if not path:
         return {"error": "No path generated"}
     points_json = {
@@ -872,3 +498,302 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             "calc_segment_tilt": round(calc_segment_tilt, 2)
         }
     }
+
+
+def extract_skeleton(triangles, min_z, max_z, dz=1.0):
+    z_buckets = {}
+    for t in triangles:
+        t_min = min(t[2], t[5], t[8])
+        t_max = max(t[2], t[5], t[8])
+        for l in range(int(math.floor(t_min / dz)), int(math.floor(t_max / dz)) + 1):
+            z_buckets.setdefault(l, []).append((t_min, t_max, t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11]))
+            
+    layers = []
+    z = min_z + dz
+    while z <= max_z:
+        l_idx = int(math.floor(z / dz))
+        segments = get_z_slice_segments([t for t in z_buckets.get(l_idx, []) if t[0] <= z and t[1] >= z], z)
+        
+        loops = chain_segments(segments)
+        centroids = []
+        for loop in loops:
+            cx, cy = 0.0, 0.0
+            area = 0.0
+            pts = [seg[0] for seg in loop]
+            for i in range(len(pts)):
+                j = (i + 1) % len(pts)
+                cross = pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1]
+                area += cross
+                cx += (pts[i][0] + pts[j][0]) * cross
+                cy += (pts[i][1] + pts[j][1]) * cross
+            
+            area *= 0.5
+            if area != 0:
+                cx /= (6.0 * area)
+                cy /= (6.0 * area)
+                centroids.append((cx, cy, z))
+            else:
+                cx = sum(p[0] for p in pts) / len(pts)
+                cy = sum(p[1] for p in pts) / len(pts)
+                centroids.append((cx, cy, z))
+                
+        if centroids:
+            layers.append(centroids)
+        z += dz
+        
+    return layers
+
+def build_tree(layers):
+    if not layers: return []
+    roots = [BranchNode(c) for c in layers[0]]
+    prev_nodes = roots
+    
+    for centroids in layers[1:]:
+        current_nodes = [BranchNode(c) for c in centroids]
+        for cn in current_nodes:
+            closest_pn = min(prev_nodes, key=lambda pn: math.dist(pn.pt, cn.pt))
+            closest_pn.children.append(cn)
+        prev_nodes = current_nodes
+        
+    for r in roots:
+        calculate_depths(r)
+    return roots
+
+def calculate_depths(node):
+    if not node.children:
+        node.depth = 1
+        return 1
+    max_d = 0
+    for c in node.children:
+        d = calculate_depths(c)
+        max_d = max(max_d, d)
+    node.depth = max_d + 1
+    return node.depth
+
+def extract_branches(node, current_branch, branches):
+    current_branch.pts.append(node.pt)
+    if not node.children:
+        return
+        
+    children = sorted(node.children, key=lambda c: c.depth, reverse=True)
+    extract_branches(children[0], current_branch, branches)
+    
+    for child in children[1:]:
+        new_branch = Branch()
+        new_branch.pts.append(node.pt) 
+        branches.append(new_branch)
+        extract_branches(child, new_branch, branches)
+
+def intersect_mesh_plane(triangles, P, N):
+    segments = []
+    nx, ny, nz = N
+    px, py, pz = P
+    
+    for t in triangles:
+        d0 = (t[0] - px)*nx + (t[1] - py)*ny + (t[2] - pz)*nz
+        d1 = (t[3] - px)*nx + (t[4] - py)*ny + (t[5] - pz)*nz
+        d2 = (t[6] - px)*nx + (t[7] - py)*ny + (t[8] - pz)*nz
+        
+        if (d0 > 0 and d1 > 0 and d2 > 0) or (d0 < 0 and d1 < 0 and d2 < 0):
+            continue
+            
+        pts = []
+        if (d0 > 0) != (d1 > 0) or (d0 == 0 and d1 != 0):
+            denom = d0 - d1
+            if denom != 0:
+                t_val = d0 / denom
+                pts.append((t[0] + t_val*(t[3]-t[0]), t[1] + t_val*(t[4]-t[1]), t[2] + t_val*(t[5]-t[2])))
+        if (d1 > 0) != (d2 > 0) or (d1 == 0 and d2 != 0):
+            denom = d1 - d2
+            if denom != 0:
+                t_val = d1 / denom
+                pts.append((t[3] + t_val*(t[6]-t[3]), t[4] + t_val*(t[7]-t[4]), t[5] + t_val*(t[8]-t[5])))
+        if (d2 > 0) != (d0 > 0) or (d2 == 0 and d0 != 0):
+            denom = d2 - d0
+            if denom != 0:
+                t_val = d2 / denom
+                pts.append((t[6] + t_val*(t[0]-t[6]), t[7] + t_val*(t[1]-t[7]), t[8] + t_val*(t[2]-t[8])))
+                
+        unique_pts = []
+        for p in pts:
+            is_dup = False
+            for up in unique_pts:
+                if abs(p[0]-up[0]) < 1e-5 and abs(p[1]-up[1]) < 1e-5 and abs(p[2]-up[2]) < 1e-5:
+                    is_dup = True; break
+            if not is_dup: unique_pts.append(p)
+                
+        if len(unique_pts) == 2:
+            segments.append((unique_pts[0], unique_pts[1], t[9], t[10], t[11]))
+            
+    return segments
+
+def get_local_frame(N):
+    nx, ny, nz = N
+    if abs(nz) < 0.9:
+        ux, uy, uz = 0, 0, 1
+    else:
+        ux, uy, uz = 1, 0, 0
+        
+    Ux = ny*uz - nz*uy
+    Uy = nz*ux - nx*uz
+    Uz = nx*uy - ny*ux
+    
+    u_len = math.sqrt(Ux*Ux + Uy*Uy + Uz*Uz)
+    if u_len == 0:
+        Ux, Uy, Uz = 1.0, 0.0, 0.0
+    else:
+        Ux, Uy, Uz = Ux/u_len, Uy/u_len, Uz/u_len
+    
+    Vx = ny*Uz - nz*Uy
+    Vy = nz*Ux - nx*Uz
+    Vz = nx*Uy - ny*Ux
+    
+    return (Ux, Uy, Uz), (Vx, Vy, Vz)
+
+def resample_polyline(pts, max_len=0.5):
+    if not pts: return []
+    resampled = [pts[0]]
+    for i in range(len(pts)-1):
+        p1, p2 = pts[i], pts[i+1]
+        dx, dy, dz = p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]
+        d = math.sqrt(dx*dx + dy*dy + dz*dz)
+        if d <= max_len:
+            resampled.append(p2)
+        else:
+            steps = int(math.ceil(d / max_len))
+            for s in range(1, steps + 1):
+                t = s / steps
+                resampled.append((p1[0] + dx * t, p1[1] + dy * t, p1[2] + dz * t))
+    return resampled
+
+def slice_skeleton_mesh_inner(triangles, layer_height, infill_density, infill_pattern):
+    path = []
+    
+    # 1. Extract skeleton
+    min_z = min(min(t[2], t[5], t[8]) for t in triangles)
+    max_z = max(max(t[2], t[5], t[8]) for t in triangles)
+    layers = extract_skeleton(triangles, min_z, max_z, dz=0.5)
+    
+    roots = build_tree(layers)
+    branches = []
+    for root in roots:
+        b = Branch()
+        branches.append(b)
+        extract_branches(root, b, branches)
+        
+    layer_idx = 0
+    path_id = 0
+    line_width = 0.4
+    infill_spacing = line_width / (infill_density / 100.0) if infill_density > 0.1 else 1e9
+    
+    # Precompute min/max for infill
+    min_x = min(min(t[0], t[3], t[6]) for t in triangles)
+    max_x = max(max(t[0], t[3], t[6]) for t in triangles)
+    min_y = min(min(t[1], t[4], t[7]) for t in triangles)
+    max_y = max(max(t[1], t[4], t[7]) for t in triangles)
+    
+    for branch in branches:
+        pts = resample_polyline(branch.pts, layer_height)
+        if len(pts) < 2: continue
+        
+        # Calculate tangents
+        for i in range(len(pts)):
+            if i == 0:
+                dx = pts[1][0] - pts[0][0]
+                dy = pts[1][1] - pts[0][1]
+                dz = pts[1][2] - pts[0][2]
+            elif i == len(pts) - 1:
+                dx = pts[-1][0] - pts[-2][0]
+                dy = pts[-1][1] - pts[-2][1]
+                dz = pts[-1][2] - pts[-2][2]
+            else:
+                dx = pts[i+1][0] - pts[i-1][0]
+                dy = pts[i+1][1] - pts[i-1][1]
+                dz = pts[i+1][2] - pts[i-1][2]
+                
+            length = math.sqrt(dx*dx + dy*dy + dz*dz)
+            if length == 0:
+                nx, ny, nz = 0, 0, 1
+            else:
+                nx, ny, nz = dx/length, dy/length, dz/length
+                
+            # Restrict tangents from pointing downwards during printing (overhang limit)
+            if nz < 0:
+                nz = 0.0
+                length = math.sqrt(nx*nx + ny*ny + nz*nz)
+                nx, ny, nz = nx/length, ny/length, nz/length
+            
+            P = pts[i]
+            N = (nx, ny, nz)
+            
+            # Slice with plane
+            segments = intersect_mesh_plane(triangles, P, N)
+            loops = chain_segments(segments)
+            if not loops: continue
+            
+            # Convert to local 2D frame to filter
+            U, V = get_local_frame(N)
+            
+            best_loop = None
+            best_dist = 1e9
+            
+            local_loops = []
+            for loop in loops:
+                local_pts = []
+                for seg in loop:
+                    p3d = seg[0]
+                    u = (p3d[0]-P[0])*U[0] + (p3d[1]-P[1])*U[1] + (p3d[2]-P[2])*U[2]
+                    v = (p3d[0]-P[0])*V[0] + (p3d[1]-P[1])*V[1] + (p3d[2]-P[2])*V[2]
+                    local_pts.append((u, v))
+                local_loops.append(local_pts)
+                
+                if point_in_polygon(0, 0, local_pts):
+                    best_loop = loop
+                    break
+                else:
+                    # Find closest loop if none contain center
+                    for pu, pv in local_pts:
+                        d = math.hypot(pu, pv)
+                        if d < best_dist:
+                            best_dist = d
+                            best_loop = loop
+                            
+            if best_loop:
+                # Add Perimeter
+                path_id += 1
+                for seg in best_loop:
+                    p3d = seg[0]
+                    path.append((p3d[0], p3d[1], p3d[2], nx, ny, nz, layer_idx, "perimeter", path_id))
+                path.append((best_loop[0][0][0], best_loop[0][0][1], best_loop[0][0][2], nx, ny, nz, layer_idx, "perimeter", path_id))
+                
+                # Generate Infill
+                # We need local 2D segments for generate_infill
+                local_segments = []
+                for seg in best_loop:
+                    p1 = seg[0]
+                    p2 = seg[1]
+                    u1 = (p1[0]-P[0])*U[0] + (p1[1]-P[1])*U[1] + (p1[2]-P[2])*U[2]
+                    v1 = (p1[0]-P[0])*V[0] + (p1[1]-P[1])*V[1] + (p1[2]-P[2])*V[2]
+                    u2 = (p2[0]-P[0])*U[0] + (p2[1]-P[1])*U[1] + (p2[2]-P[2])*U[2]
+                    v2 = (p2[0]-P[0])*V[0] + (p2[1]-P[1])*V[1] + (p2[2]-P[2])*V[2]
+                    local_segments.append(((u1, v1), (u2, v2)))
+                    
+                infill_pts = generate_infill(local_segments, -500, 500, -500, 500, infill_spacing, infill_pattern, layer_idx)
+                for i_pt in range(0, len(infill_pts), 2):
+                    p1 = infill_pts[i_pt]
+                    p2 = infill_pts[i_pt+1]
+                    # Map back to 3D
+                    x1 = P[0] + p1[0]*U[0] + p1[1]*V[0]
+                    y1 = P[1] + p1[0]*U[1] + p1[1]*V[1]
+                    z1 = P[2] + p1[0]*U[2] + p1[1]*V[2]
+                    x2 = P[0] + p2[0]*U[0] + p2[1]*V[0]
+                    y2 = P[1] + p2[0]*U[1] + p2[1]*V[1]
+                    z2 = P[2] + p2[0]*U[2] + p2[1]*V[2]
+                    
+                    path_id += 1
+                    path.append((x1, y1, z1, nx, ny, nz, layer_idx, "infill", path_id))
+                    path.append((x2, y2, z2, nx, ny, nz, layer_idx, "infill", path_id))
+                    
+            layer_idx += 1
+            
+    return path
