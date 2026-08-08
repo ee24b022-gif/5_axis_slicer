@@ -761,10 +761,11 @@ def slice_skeleton_mesh_inner(triangles, layer_height, infill_density, infill_pa
             if best_loop:
                 # Add Perimeter
                 path_id += 1
-                for seg in best_loop:
-                    p3d = seg[0]
+                perimeter_pts = [seg[0] for seg in best_loop]
+                perimeter_pts.append(best_loop[0][0])
+                resampled_perimeter = resample_polyline(perimeter_pts, 0.5)
+                for p3d in resampled_perimeter:
                     path.append((p3d[0], p3d[1], p3d[2], nx, ny, nz, layer_idx, "perimeter", path_id))
-                path.append((best_loop[0][0][0], best_loop[0][0][1], best_loop[0][0][2], nx, ny, nz, layer_idx, "perimeter", path_id))
                 
                 # Generate Infill
                 # We need local 2D segments for generate_infill
@@ -791,8 +792,9 @@ def slice_skeleton_mesh_inner(triangles, layer_height, infill_density, infill_pa
                     z2 = P[2] + p2[0]*U[2] + p2[1]*V[2]
                     
                     path_id += 1
-                    path.append((x1, y1, z1, nx, ny, nz, layer_idx, "infill", path_id))
-                    path.append((x2, y2, z2, nx, ny, nz, layer_idx, "infill", path_id))
+                    resampled_infill = resample_polyline([(x1, y1, z1), (x2, y2, z2)], 0.5)
+                    for p3d in resampled_infill:
+                        path.append((p3d[0], p3d[1], p3d[2], nx, ny, nz, layer_idx, "infill", path_id))
                     
             layer_idx += 1
             
