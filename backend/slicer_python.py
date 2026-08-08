@@ -317,6 +317,9 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     min_x, min_y, min_z = min_b
     max_x, max_y, max_z = max_b
     
+    calc_z_cutoff = 1e9
+    calc_segment_tilt = 0.0
+    
     if not path:
         return {"error": "No path generated"}
     points_json = {
