@@ -396,7 +396,8 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         "ny": array.array('f'),
         "nz": array.array('f'),
         "layer": array.array('H'),
-        "type": array.array('B')
+        "type": array.array('B'),
+        "path_id": array.array('I')
     }
     
     gcode_file = tempfile.TemporaryFile(mode='w+')
@@ -427,6 +428,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         points_json["nz"].append(nz)
         points_json["layer"].append(layer)
         points_json["type"].append(0 if ptype == "perimeter" else (2 if ptype == "support" else 1))
+        points_json["path_id"].append(current_path_id)
         
         v_rad = math.atan2(nx, ny)
         xy_mag = math.sqrt(nx*nx + ny*ny)
@@ -766,11 +768,10 @@ def slice_skeleton_mesh_inner(triangles, layer_height, infill_density, infill_pa
             if best_loop:
                 # Add Perimeter
                 path_id += 1
-                perimeter_pts = [seg[0] for seg in best_loop]
-                perimeter_pts.append(best_loop[0][0])
-                resampled_perimeter = resample_polyline(perimeter_pts, 0.5)
-                for p3d in resampled_perimeter:
+                for seg in best_loop:
+                    p3d = seg[0]
                     path.append((p3d[0], p3d[1], p3d[2], nx, ny, nz, layer_idx, "perimeter", path_id))
+                path.append((best_loop[0][0][0], best_loop[0][0][1], best_loop[0][0][2], nx, ny, nz, layer_idx, "perimeter", path_id))
                 
                 # Generate Infill
                 # We need local 2D segments for generate_infill
@@ -797,9 +798,8 @@ def slice_skeleton_mesh_inner(triangles, layer_height, infill_density, infill_pa
                     z2 = P[2] + p2[0]*U[2] + p2[1]*V[2]
                     
                     path_id += 1
-                    resampled_infill = resample_polyline([(x1, y1, z1), (x2, y2, z2)], 0.5)
-                    for p3d in resampled_infill:
-                        path.append((p3d[0], p3d[1], p3d[2], nx, ny, nz, layer_idx, "infill", path_id))
+                    path.append((x1, y1, z1, nx, ny, nz, layer_idx, "infill", path_id))
+                    path.append((x2, y2, z2, nx, ny, nz, layer_idx, "infill", path_id))
                     
             layer_idx += 1
             
