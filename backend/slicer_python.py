@@ -502,17 +502,26 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
 
 def extract_skeleton(triangles, min_z, max_z, dz=1.0):
     z_buckets = {}
-    for t in triangles:
+    for i, t in enumerate(triangles):
         t_min = min(t[2], t[5], t[8])
         t_max = max(t[2], t[5], t[8])
         for l in range(int(math.floor(t_min / dz)), int(math.floor(t_max / dz)) + 1):
-            z_buckets.setdefault(l, []).append((t_min, t_max, t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11]))
+            z_buckets.setdefault(l, []).append(i)
             
     layers = []
     z = min_z + dz
     while z <= max_z:
         l_idx = int(math.floor(z / dz))
-        segments = get_z_slice_segments([t for t in z_buckets.get(l_idx, []) if t[0] <= z and t[1] >= z], z)
+        
+        layer_tris = []
+        for idx in z_buckets.get(l_idx, []):
+            t = triangles[idx]
+            t_min = min(t[2], t[5], t[8])
+            t_max = max(t[2], t[5], t[8])
+            if t_min <= z and t_max >= z:
+                layer_tris.append((t_min, t_max, t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11]))
+                
+        segments = get_z_slice_segments(layer_tris, z)
         
         loops = chain_segments(segments)
         centroids = []
