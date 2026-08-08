@@ -311,80 +311,11 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             
         return z_dist / denom
         
-    def get_wavy_normal(x, y, true_z):
-        if wave_amplitude == 0.0:
-            return 0.0, 0.0, 1.0
-            
-        att = get_attenuation(true_z)
-        if att == 0.0:
-            return 0.0, 0.0, 1.0
-            
-        df_dx = att * wave_amplitude * wave_frequency * math.cos(wave_frequency * x) * math.cos(wave_frequency * y)
-        df_dy = -att * wave_amplitude * wave_frequency * math.sin(wave_frequency * x) * math.sin(wave_frequency * y)
-        nx, ny, nz = -df_dx, -df_dy, 1.0
-        length = math.sqrt(nx*nx + ny*ny + nz*nz)
-        return nx/length, ny/length, nz/length
-
-    def resample_pts(p1, p2, max_len=0.5):
-        dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-        d = math.hypot(dx, dy)
-        if d <= max_len:
-            return [p1, p2]
-        n = int(math.ceil(d / max_len))
-        pts = []
-        for i in range(n + 1):
-            t = i / n
-            pts.append((p1[0] + dx*t, p1[1] + dy*t))
-        return pts
-
-    def subdivide_triangles(triangles, max_len=2.0):
-        if wave_amplitude == 0.0:
-            return triangles
-            
-        def edge_len(a, b): return math.hypot(math.hypot(a[0]-b[0], a[1]-b[1]), a[2]-b[2])
-        
-        result = []
-        stack = list(triangles)
-        
-        while stack:
-            tri = stack.pop()
-            v0, v1, v2 = (tri[0], tri[1], tri[2]), (tri[3], tri[4], tri[5]), (tri[6], tri[7], tri[8])
-            n = (tri[9], tri[10], tri[11])
-            
-            l01 = edge_len(v0, v1)
-            l12 = edge_len(v1, v2)
-            l20 = edge_len(v2, v0)
-            
-            max_l = max(l01, l12, l20)
-            if max_l <= max_len:
-                result.append((*v0, *v1, *v2, *n))
-            elif max_l == l01:
-                vm = ((v0[0]+v1[0])/2, (v0[1]+v1[1])/2, (v0[2]+v1[2])/2)
-                stack.append((*v0, *vm, *v2, *n))
-                stack.append((*vm, *v1, *v2, *n))
-            elif max_l == l12:
-                vm = ((v1[0]+v2[0])/2, (v1[1]+v2[1])/2, (v1[2]+v2[2])/2)
-                stack.append((*v0, *v1, *vm, *n))
-                stack.append((*v0, *vm, *v2, *n))
-            else:
-                vm = ((v2[0]+v0[0])/2, (v2[1]+v0[1])/2, (v2[2]+v0[2])/2)
-                stack.append((*v0, *v1, *vm, *n))
-                stack.append((*vm, *v1, *v2, *n))
-                
-        return result
-        
-    subdivided_triangles = subdivide_triangles(original_triangles, max_len=2.0)
+    # Skeleton-driven conformal slicing
+    path = slice_skeleton_mesh_inner(original_triangles, layer_height, infill_density, infill_pattern)
     
     min_x, min_y, min_z = min_b
     max_x, max_y, max_z = max_b
-    
-    calc_z_cutoff = 1e9
-    calc_segment_tilt = 0.0
-    t_min_z = min_z
-    
-
-    # Skeleton-driven conformal slicing
-    path = slice_skeleton_mesh_inner(original_triangles, layer_height, infill_density, infill_pattern)
     
     if not path:
         return {"error": "No path generated"}
