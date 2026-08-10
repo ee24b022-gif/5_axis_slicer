@@ -374,8 +374,8 @@ function App() {
       const points = response.data.toolpath_points;
       const segInfo = response.data.segmentation_info;
       
-      if (points.length > 0) {
-        const maxLayer = Math.max(...points.map((p: any) => p.layer));
+      if (points && points.layer && points.layer.length > 0) {
+        const maxLayer = Math.max(...points.layer);
         setTotalLayers(maxLayer);
         setMaxVisibleLayer(maxLayer);
       }
@@ -425,6 +425,21 @@ function App() {
 
       <div className="main-content">
         <aside className="sidebar">
+          <div className="btn-group" style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', width: '100%' }}>
+              <div className="btn-secondary" style={{ width: '100%', borderColor: '#39ff14', color: '#39ff14' }}>
+                [ {file ? file.name.substring(0, 20) + (file.name.length > 20 ? '...' : '') : "Upload STL File"} ]
+              </div>
+              <input 
+                type="file" 
+                accept=".stl" 
+                onChange={handleFileChange} 
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+              />
+            </label>
+          </div>
+
           <div className="accent-text" style={{ marginBottom: '10px' }}>
             &gt; TRANSFORM MODEL
           </div>
@@ -646,18 +661,7 @@ function App() {
           </div>
           
           <div className="btn-group">
-            <label style={{ display: 'block', width: '100%' }}>
-              <div className="btn-secondary" style={{ width: '100%' }}>
-                [ {file ? file.name.substring(0, 20) + (file.name.length > 20 ? '...' : '') : "Upload STL"} ]
-              </div>
-              <input 
-                type="file" 
-                accept=".stl" 
-                onChange={handleFileChange} 
-                ref={fileInputRef}
-                style={{ display: 'none' }}
-              />
-            </label>
+
             
             {isSlicing && uploadProgress < 100 && (
               <div style={{ marginTop: '10px', width: '100%', height: '10px', backgroundColor: '#111', border: '1px solid #1f6b1f' }}>
