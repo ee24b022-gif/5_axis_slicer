@@ -358,6 +358,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     
     calc_z_cutoff = 1e9
     calc_segment_tilt = 0.0
+    tilt_axis = 'X'
     t_min_z = min_z
     
     if auto_segment:
@@ -365,8 +366,14 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         if overhangs:
             lowest_z = min(min(t[2], t[5], t[8]) for t in overhangs)
             calc_z_cutoff = max(min_z + 2.0, lowest_z - 2.0)
+            avg_nx = sum(t[9] for t in overhangs) / len(overhangs)
             avg_ny = sum(t[10] for t in overhangs) / len(overhangs)
-            calc_segment_tilt = -45.0 if avg_ny > 0 else 45.0
+            if abs(avg_nx) > abs(avg_ny):
+                tilt_axis = 'Y'
+                calc_segment_tilt = -45.0 if avg_nx > 0 else 45.0
+            else:
+                tilt_axis = 'X'
+                calc_segment_tilt = -45.0 if avg_ny > 0 else 45.0
             
     if (max_x - min_x) > 500.0 or (max_y - min_y) > 500.0:
         return {"error": "Model is too large (>500mm). Scale down your STL to millimeters."}
@@ -375,11 +382,23 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     infill_spacing = line_width / (infill_density / 100.0) if infill_density > 0.1 else 1e9
     
     transformed_triangles = [list(t) for t in subdivided_triangles]
+    del subdivided_triangles
+    del original_triangles
     for tri in transformed_triangles:
         tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
         
     if calc_z_cutoff != 1e9: calc_z_cutoff -= t_min_z
     
+    global_c, global_s = math.cos(calc_segment_tilt * math.pi / 180.0), math.sin(calc_segment_tilt * math.pi / 180.0)
+    cz_val = calc_z_cutoff
+    
+    if tilt_axis == 'X':
+        def rotate_pt(px, py, pz): return (px, py * global_c - (pz - cz_val) * global_s, py * global_s + (pz - cz_val) * global_c + cz_val)
+        def inverse_rotate_pt(px, py, pz): return (px, py * global_c + (pz - cz_val) * global_s, -py * global_s + (pz - cz_val) * global_c + cz_val)
+    else:
+        def rotate_pt(px, py, pz): return (px * global_c + (pz - cz_val) * global_s, py, -px * global_s + (pz - cz_val) * global_c + cz_val)
+        def inverse_rotate_pt(px, py, pz): return (px * global_c - (pz - cz_val) * global_s, py, px * global_s + (pz - cz_val) * global_c + cz_val)
+
     distorted_triangles = []
     dist_min_z = 1e9
     dist_max_z = -1e9
@@ -401,7 +420,9 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         
         distorted_triangles.append((t_min, t_max, v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
         
-    def resample_polyline(pts, max_len=2.0):
+    del transformed_triangles
+        
+    def resample_polyline(pts, max_len=0.5):
         if not pts: return []
         resampled = [pts[0]]
         for i in range(len(pts)-1):
@@ -497,10 +518,6 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         z += layer_height; layer_idx += 1
         
     if calc_z_cutoff != 1e9:
-        c, s = math.cos(calc_segment_tilt * math.pi / 180.0), math.sin(calc_segment_tilt * math.pi / 180.0)
-        cz = calc_z_cutoff
-        def rotate_pt(px, py, pz): return (px, py * c - (pz - cz) * s, py * s + (pz - cz) * c + cz)
-        def inverse_rotate_pt(px, py, pz): return (px, py * c + (pz - cz) * s, -py * s + (pz - cz) * c + cz)
         tilted_triangles = []
         tilted_min_z, tilted_max_z = 1e9, -1e9
         tilted_min_x, tilted_max_x = 1e9, -1e9
@@ -512,12 +529,25 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             tilted_min_z, tilted_max_z = min(tilted_min_z, t_min), max(tilted_max_z, t_max)
             tilted_min_x, tilted_max_x = min(tilted_min_x, rv0[0], rv1[0], rv2[0]), max(tilted_max_x, rv0[0], rv1[0], rv2[0])
             tilted_min_y, tilted_max_y = min(tilted_min_y, rv0[1], rv1[1], rv2[1]), max(tilted_max_y, rv0[1], rv1[1], rv2[1])
-            tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], t[11], t[12] * c - t[13] * s, t[12] * s + t[13] * c))
-        tilt_nx, tilt_ny, tilt_nz = 0.0, s, c
+            if tilt_axis == 'X':
+                tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], t[11], t[12] * global_c - t[13] * global_s, t[12] * global_s + t[13] * global_c))
+            else:
+                tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], t[11] * global_c - t[13] * global_s, t[12], t[11] * global_s + t[13] * global_c))
+        
+        if tilt_axis == 'X':
+            tilt_nx, tilt_ny, tilt_nz = 0.0, global_s, global_c
+        else:
+            tilt_nx, tilt_ny, tilt_nz = -global_s, 0.0, global_c
+                
+        del distorted_triangles
+        
         tilt_z_buckets = {}
         for t in tilted_triangles:
             for l in range(int(math.floor(t[0] / layer_height)), int(math.floor(t[1] / layer_height)) + 1):
                 tilt_z_buckets.setdefault(l, []).append(t)
+                
+        del tilted_triangles
+        
         z = tilted_min_z + layer_height
         while z <= tilted_max_z:
             l_idx = int(math.floor(z / layer_height))
