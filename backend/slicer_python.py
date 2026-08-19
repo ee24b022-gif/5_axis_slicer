@@ -490,6 +490,44 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     
         if current_chunk: chunks.append(current_chunk)
         return chunks
+        
+    def optimize_infill_chunks(chunks, start_pt):
+        if not chunks: return []
+        optimized = []
+        current_pt = start_pt
+        
+        unvisited = list(chunks)
+        while unvisited:
+            best_idx = 0
+            best_dist = 1e9
+            best_reverse = False
+            
+            for i, chunk in enumerate(unvisited):
+                if not chunk: continue
+                d_start = math.hypot(chunk[0][0] - current_pt[0], chunk[0][1] - current_pt[1])
+                d_end = math.hypot(chunk[-1][0] - current_pt[0], chunk[-1][1] - current_pt[1])
+                
+                if d_start < best_dist:
+                    best_dist = d_start
+                    best_idx = i
+                    best_reverse = False
+                
+                if d_end < best_dist:
+                    best_dist = d_end
+                    best_idx = i
+                    best_reverse = True
+            
+            best_chunk = unvisited.pop(best_idx)
+            if best_reverse:
+                best_chunk.reverse()
+            
+            optimized.append(best_chunk)
+            current_pt = (best_chunk[-1][0], best_chunk[-1][1])
+            
+        return optimized
+
+    def get_last_path_pt():
+        return (path[-1][0], path[-1][1]) if path else (0.0, 0.0)
     
     path, layer_idx, path_id = [], 0, 0
     z_buckets = {}
@@ -515,14 +553,17 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
                     path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "perimeter", path_id))
         infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
+        layer_infill_chunks = []
         for i in range(0, len(infill_pts), 2):
             resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
-            chunks = clip_polyline(resampled, z, False, True)
-            for chunk in chunks:
-                path_id += 1
-                for pt in chunk:
-                    nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
-                    path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "infill", path_id))
+            layer_infill_chunks.extend(clip_polyline(resampled, z, False, True))
+            
+        optimized_chunks = optimize_infill_chunks(layer_infill_chunks, get_last_path_pt())
+        for chunk in optimized_chunks:
+            path_id += 1
+            for pt in chunk:
+                nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
+                path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "infill", path_id))
         z += layer_height; layer_idx += 1
         
     if calc_z_cutoff != 1e9:
@@ -572,13 +613,16 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     for pt in chunk:
                         path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
             infill_pts = generate_infill(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, infill_spacing, infill_pattern, layer_idx)
+            layer_infill_chunks = []
             for i in range(0, len(infill_pts), 2):
                 resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
-                chunks = clip_polyline(resampled, z, True, False)
-                for chunk in chunks:
-                    path_id += 1
-                    for pt in chunk:
-                        path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill", path_id))
+                layer_infill_chunks.extend(clip_polyline(resampled, z, True, False))
+                
+            optimized_chunks = optimize_infill_chunks(layer_infill_chunks, get_last_path_pt())
+            for chunk in optimized_chunks:
+                path_id += 1
+                for pt in chunk:
+                    path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill", path_id))
             z += layer_height; layer_idx += 1
             
     if not path:
