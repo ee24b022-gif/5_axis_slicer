@@ -401,7 +401,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         
         distorted_triangles.append((t_min, t_max, v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
         
-    def resample_polyline(pts, max_len=0.5):
+    def resample_polyline(pts, max_len=2.0):
         if not pts: return []
         resampled = [pts[0]]
         for i in range(len(pts)-1):
