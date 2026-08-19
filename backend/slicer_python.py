@@ -532,8 +532,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 for chunk in chunks:
                     path_id += 1
                     for pt in chunk:
-                        opt = inverse_rotate_pt(pt[0], pt[1], pt[2])
-                        path.append((opt[0], opt[1], opt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
+                        path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
             infill_pts = generate_infill(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, infill_spacing, infill_pattern, layer_idx)
             for i in range(0, len(infill_pts), 2):
                 resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
@@ -541,8 +540,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 for chunk in chunks:
                     path_id += 1
                     for pt in chunk:
-                        opt = inverse_rotate_pt(pt[0], pt[1], pt[2])
-                        path.append((opt[0], opt[1], opt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill", path_id))
+                        path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill", path_id))
             z += layer_height; layer_idx += 1
             
     if not path:
