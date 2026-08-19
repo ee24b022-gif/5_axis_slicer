@@ -366,14 +366,22 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         if overhangs:
             lowest_z = min(min(t[2], t[5], t[8]) for t in overhangs)
             calc_z_cutoff = max(min_z + 2.0, lowest_z - 2.0)
-            avg_nx = sum(t[9] for t in overhangs) / len(overhangs)
-            avg_ny = sum(t[10] for t in overhangs) / len(overhangs)
-            if abs(avg_nx) > abs(avg_ny):
+            o_min_x = min(min(t[0], t[3], t[6]) for t in overhangs)
+            o_max_x = max(max(t[0], t[3], t[6]) for t in overhangs)
+            o_min_y = min(min(t[1], t[4], t[7]) for t in overhangs)
+            o_max_y = max(max(t[1], t[4], t[7]) for t in overhangs)
+            
+            o_cx = (o_min_x + o_max_x) / 2.0
+            o_cy = (o_min_y + o_max_y) / 2.0
+            base_cx = (min_x + max_x) / 2.0
+            base_cy = (min_y + max_y) / 2.0
+            
+            if (o_max_x - o_min_x) > (o_max_y - o_min_y):
                 tilt_axis = 'Y'
-                calc_segment_tilt = -45.0 if avg_nx > 0 else 45.0
+                calc_segment_tilt = -45.0 if o_cx > base_cx else 45.0
             else:
                 tilt_axis = 'X'
-                calc_segment_tilt = -45.0 if avg_ny > 0 else 45.0
+                calc_segment_tilt = -45.0 if o_cy > base_cy else 45.0
             
     if (max_x - min_x) > 500.0 or (max_y - min_y) > 500.0:
         return {"error": "Model is too large (>500mm). Scale down your STL to millimeters."}
