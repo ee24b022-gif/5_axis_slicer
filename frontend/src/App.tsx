@@ -375,7 +375,10 @@ function App() {
       const segInfo = response.data.segmentation_info;
       
       if (points && points.layer && points.layer.length > 0) {
-        const maxLayer = Math.max(...points.layer);
+        let maxLayer = 0;
+        for (let i = 0; i < points.layer.length; i++) {
+          if (points.layer[i] > maxLayer) maxLayer = points.layer[i];
+        }
         setTotalLayers(maxLayer);
         setMaxVisibleLayer(maxLayer);
       }
