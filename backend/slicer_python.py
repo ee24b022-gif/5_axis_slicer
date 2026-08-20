@@ -358,7 +358,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     
     calc_z_cutoff = 1e9
     calc_segment_tilt = 0.0
-    tilt_axis = 'X'
+    tilt_dir_x, tilt_dir_y = 1.0, 0.0
     t_min_z = min_z
     
     if auto_segment:
@@ -376,12 +376,17 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             base_cx = (min_x + max_x) / 2.0
             base_cy = (min_y + max_y) / 2.0
             
-            if (o_max_x - o_min_x) > (o_max_y - o_min_y):
-                tilt_axis = 'Y'
-                calc_segment_tilt = -45.0 if o_cx > base_cx else 45.0
+            dx = o_cx - base_cx
+            dy = o_cy - base_cy
+            length = math.hypot(dx, dy)
+            if length > 1e-4:
+                tilt_dir_x = dx / length
+                tilt_dir_y = dy / length
             else:
-                tilt_axis = 'X'
-                calc_segment_tilt = -45.0 if o_cy > base_cy else 45.0
+                tilt_dir_x = 1.0
+                tilt_dir_y = 0.0
+            
+            calc_segment_tilt = 45.0
             
     if (max_x - min_x) > 500.0 or (max_y - min_y) > 500.0:
         return {"error": "Model is too large (>500mm). Scale down your STL to millimeters."}
@@ -400,12 +405,25 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     global_c, global_s = math.cos(calc_segment_tilt * math.pi / 180.0), math.sin(calc_segment_tilt * math.pi / 180.0)
     cz_val = calc_z_cutoff
     
-    if tilt_axis == 'X':
-        def rotate_pt(px, py, pz): return (px, py * global_c - (pz - cz_val) * global_s, py * global_s + (pz - cz_val) * global_c + cz_val)
-        def inverse_rotate_pt(px, py, pz): return (px, py * global_c + (pz - cz_val) * global_s, -py * global_s + (pz - cz_val) * global_c + cz_val)
-    else:
-        def rotate_pt(px, py, pz): return (px * global_c + (pz - cz_val) * global_s, py, -px * global_s + (pz - cz_val) * global_c + cz_val)
-        def inverse_rotate_pt(px, py, pz): return (px * global_c - (pz - cz_val) * global_s, py, px * global_s + (pz - cz_val) * global_c + cz_val)
+    rot_ax_x = -tilt_dir_y
+    rot_ax_y = tilt_dir_x
+    rot_ax_z = 0.0
+    
+    def vector_rot(vx, vy, vz, ax, ay, az, sn, cs):
+        dot = vx*ax + vy*ay + vz*az
+        cx, cy, cz = ay*vz - az*vy, az*vx - ax*vz, ax*vy - ay*vx
+        rx = vx*cs + cx*sn + ax*dot*(1-cs)
+        ry = vy*cs + cy*sn + ay*dot*(1-cs)
+        rz = vz*cs + cz*sn + az*dot*(1-cs)
+        return rx, ry, rz
+
+    def rotate_pt(px, py, pz):
+        rx, ry, rz = vector_rot(px, py, pz - cz_val, rot_ax_x, rot_ax_y, rot_ax_z, global_s, global_c)
+        return rx, ry, rz + cz_val
+
+    def inverse_rotate_pt(px, py, pz):
+        rx, ry, rz = vector_rot(px, py, pz - cz_val, rot_ax_x, rot_ax_y, rot_ax_z, -global_s, global_c)
+        return rx, ry, rz + cz_val
 
     distorted_triangles = []
     dist_min_z = 1e9
@@ -578,15 +596,10 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             tilted_min_z, tilted_max_z = min(tilted_min_z, t_min), max(tilted_max_z, t_max)
             tilted_min_x, tilted_max_x = min(tilted_min_x, rv0[0], rv1[0], rv2[0]), max(tilted_max_x, rv0[0], rv1[0], rv2[0])
             tilted_min_y, tilted_max_y = min(tilted_min_y, rv0[1], rv1[1], rv2[1]), max(tilted_max_y, rv0[1], rv1[1], rv2[1])
-            if tilt_axis == 'X':
-                tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], t[11], t[12] * global_c - t[13] * global_s, t[12] * global_s + t[13] * global_c))
-            else:
-                tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], t[11] * global_c - t[13] * global_s, t[12], t[11] * global_s + t[13] * global_c))
+            tnx, tny, tnz = vector_rot(t[11], t[12], t[13], rot_ax_x, rot_ax_y, rot_ax_z, global_s, global_c)
+            tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], tnx, tny, tnz))
         
-        if tilt_axis == 'X':
-            tilt_nx, tilt_ny, tilt_nz = 0.0, global_s, global_c
-        else:
-            tilt_nx, tilt_ny, tilt_nz = -global_s, 0.0, global_c
+        tilt_nx, tilt_ny, tilt_nz = vector_rot(0.0, 0.0, 1.0, rot_ax_x, rot_ax_y, rot_ax_z, global_s, global_c)
                 
         del distorted_triangles
         
