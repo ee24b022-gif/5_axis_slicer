@@ -4,6 +4,7 @@ from surface_field import SurfaceField, SurfaceFieldConfig
 from bvh import MeshBVH
 from collision import CollisionEngine
 from models import MachineProfile, FeaturePath
+from regions import AreaLogic
 
 import json
 import array
@@ -176,110 +177,6 @@ def get_z_slice_segments(active_triangles, z):
             segments.append((pts[0], pts[1], tri[11], tri[12], tri[13]))
     return segments
 
-def chain_segments(segments):
-    loops = []
-    pt_map = {}
-    
-    def get_key(pt):
-        return (round(pt[0], 3), round(pt[1], 3))
-        
-    for i, seg in enumerate(segments):
-        k0 = get_key(seg[0])
-        k1 = get_key(seg[1])
-        if k0 not in pt_map: pt_map[k0] = []
-        if k1 not in pt_map: pt_map[k1] = []
-        pt_map[k0].append(i)
-        pt_map[k1].append(i)
-        
-    used = set()
-    for start_idx in range(len(segments)):
-        if start_idx in used: continue
-        
-        current_loop = [segments[start_idx]]
-        used.add(start_idx)
-        last_k = get_key(segments[start_idx][1])
-        
-        while True:
-            found = False
-            if last_k in pt_map:
-                for next_idx in pt_map[last_k]:
-                    if next_idx not in used:
-                        seg = segments[next_idx]
-                        used.add(next_idx)
-                        k0 = get_key(seg[0])
-                        k1 = get_key(seg[1])
-                        
-                        if k0 == last_k:
-                            current_loop.append(seg)
-                            last_k = k1
-                        else:
-                            current_loop.append((seg[1], seg[0], seg[2], seg[3], seg[4]))
-                            last_k = k0
-                        found = True
-                        break
-            if not found: break
-        loops.append(current_loop)
-    return loops
-
-def generate_infill(segments, min_x, max_x, min_y, max_y, line_width, pattern="lines", layer_idx=0):
-    infill_lines = []
-    
-    def generate_axis_infill(is_x_axis):
-        axis_lines = []
-        v_start = min_y if is_x_axis else min_x
-        v_end = max_y if is_x_axis else max_x
-            
-        v = v_start
-        idx = 0
-        while v <= v_end:
-            intersects = []
-            for seg in segments:
-                p1, p2 = seg[0], seg[1]
-                if is_x_axis:
-                    if (p1[1] <= v < p2[1]) or (p2[1] <= v < p1[1]):
-                        t = (v - p1[1]) / (p2[1] - p1[1])
-                        ix = p1[0] + t * (p2[0] - p1[0])
-                        intersects.append(ix)
-                else:
-                    if (p1[0] <= v < p2[0]) or (p2[0] <= v < p1[0]):
-                        t = (v - p1[0]) / (p2[0] - p1[0])
-                        iy = p1[1] + t * (p2[1] - p1[1])
-                        intersects.append(iy)
-            intersects.sort()
-            
-            line_pts = []
-            for i in range(0, len(intersects)-1, 2):
-                v0 = intersects[i]
-                v1 = intersects[i+1]
-                
-                if idx % 2 != 0:
-                    if is_x_axis:
-                        line_pts.extend([(v1, v), (v0, v)])
-                    else:
-                        line_pts.extend([(v, v1), (v, v0)])
-                else:
-                    if is_x_axis:
-                        line_pts.extend([(v0, v), (v1, v)])
-                    else:
-                        line_pts.extend([(v, v0), (v, v1)])
-                    
-            if line_pts:
-                axis_lines.extend(line_pts)
-                
-            v += line_width
-            idx += 1
-        return axis_lines
-
-    if pattern == "grid":
-        infill_lines.extend(generate_axis_infill(True))
-        infill_lines.extend(generate_axis_infill(False))
-    else:
-        if layer_idx % 2 == 0:
-            infill_lines.extend(generate_axis_infill(True))
-        else:
-            infill_lines.extend(generate_axis_infill(False))
-            
-    return infill_lines
                 
 def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0, infill_pattern="lines"):
     original_triangles, min_b, max_b = load_stl(file_bytes, model_scale, rot_x, rot_y, rot_z, pos_x, pos_y)
@@ -309,6 +206,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     mesh_bvh = MeshBVH(np.array(bvh_vertices), np.array(bvh_faces))
     machine_profile = MachineProfile()
     collision_engine = CollisionEngine(machine_profile, mesh_bvh, bed_center_z)
+    area_logic = AreaLogic(extrusion_width=0.4)
     
     
     processed_triangles = []
@@ -609,20 +507,29 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         segments = get_z_slice_segments([t for t in z_buckets.get(l_idx, []) if t[0] <= z and t[1] >= z], z)
         if not segments:
             z += layer_height; layer_idx += 1; continue
-        for loop in chain_segments(segments):
-            pts = [loop[0][0]]
-            for seg in loop: pts.append(seg[1])
-            resampled = resample_polyline(pts)
-            chunks = clip_polyline(resampled, z, False, True)
-            for chunk in chunks:
-                path_id += 1
-                for pt in chunk:
-                    nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
-                    path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "perimeter", path_id))
-        infill_pts = generate_infill(segments, min_x, max_x, min_y, max_y, infill_spacing, infill_pattern, layer_idx)
+        layer_boundaries = area_logic.build_polygons_from_segments(segments)
+        if not layer_boundaries:
+            z += layer_height; layer_idx += 1; continue
+            
+        shells, infill_areas = area_logic.generate_shells_and_infill_area(layer_boundaries, num_shells=2)
+        infill_angle = (layer_idx % 2) * 90.0
+        infill_lines = area_logic.generate_infill_lines(infill_areas, spacing=infill_spacing, angle_deg=infill_angle)
+        
+        for shell in shells:
+            for ring in [shell.exterior] + list(shell.interiors):
+                coords = [(pt[0], pt[1], z) for pt in ring.coords]
+                resampled = resample_polyline(coords)
+                chunks = clip_polyline(resampled, z, False, True)
+                for chunk in chunks:
+                    path_id += 1
+                    for pt in chunk:
+                        nx, ny, nz = surface_field.get_normal(pt[0], pt[1], pt[2])
+                        path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "perimeter", path_id))
+                        
         layer_infill_chunks = []
-        for i in range(0, len(infill_pts), 2):
-            resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
+        for line in infill_lines:
+            coords = [(pt[0], pt[1], z) for pt in line.coords]
+            resampled = resample_polyline(coords)
             layer_infill_chunks.extend(clip_polyline(resampled, z, False, True))
             
         optimized_chunks = optimize_infill_chunks(layer_infill_chunks, get_last_path_pt())
@@ -665,19 +572,28 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             segments = get_z_slice_segments([t for t in tilt_z_buckets.get(l_idx, []) if t[0] <= z and t[1] >= z], z)
             if not segments:
                 z += layer_height; layer_idx += 1; continue
-            for loop in chain_segments(segments):
-                pts = [loop[0][0]]
-                for seg in loop: pts.append(seg[1])
-                resampled = resample_polyline(pts)
-                chunks = clip_polyline(resampled, z, True, False)
-                for chunk in chunks:
-                    path_id += 1
-                    for pt in chunk:
-                        path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
-            infill_pts = generate_infill(segments, tilted_min_x, tilted_max_x, tilted_min_y, tilted_max_y, infill_spacing, infill_pattern, layer_idx)
+            layer_boundaries = area_logic.build_polygons_from_segments(segments)
+            if not layer_boundaries:
+                z += layer_height; layer_idx += 1; continue
+                
+            shells, infill_areas = area_logic.generate_shells_and_infill_area(layer_boundaries, num_shells=2)
+            infill_angle = (layer_idx % 2) * 90.0
+            infill_lines = area_logic.generate_infill_lines(infill_areas, spacing=infill_spacing, angle_deg=infill_angle)
+            
+            for shell in shells:
+                for ring in [shell.exterior] + list(shell.interiors):
+                    coords = [(pt[0], pt[1], z) for pt in ring.coords]
+                    resampled = resample_polyline(coords)
+                    chunks = clip_polyline(resampled, z, True, False)
+                    for chunk in chunks:
+                        path_id += 1
+                        for pt in chunk:
+                            path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
+                            
             layer_infill_chunks = []
-            for i in range(0, len(infill_pts), 2):
-                resampled = resample_polyline([infill_pts[i], infill_pts[i+1]])
+            for line in infill_lines:
+                coords = [(pt[0], pt[1], z) for pt in line.coords]
+                resampled = resample_polyline(coords)
                 layer_infill_chunks.extend(clip_polyline(resampled, z, True, False))
                 
             optimized_chunks = optimize_infill_chunks(layer_infill_chunks, get_last_path_pt())

@@ -13,8 +13,8 @@ class MachineProfile:
     nozzle_diameter: float = 0.4      # mm
     filament_diameter: float = 1.75   # mm
     # Envelope for collision (cylinder approximation)
-    nozzle_length: float = 20.0
-    nozzle_holder_radius: float = 15.0
+    nozzle_length: float = 40.0
+    nozzle_holder_radius: float = 5.0
 
 @dataclass
 class SurfaceFieldConfig:

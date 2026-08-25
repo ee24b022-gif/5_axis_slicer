@@ -46,12 +46,15 @@ class CollisionEngine:
             return "bed"
             
         # Part collision check using the BVH
-        p_start = np.array([x, y, z])
+        p_start = np.array([x, y, z]) + np.array([nx, ny, nz]) * 1.0
         p_end = p_start + np.array([nx, ny, nz]) * self.profile.nozzle_length
         
         # We use nozzle_holder_radius as a conservative envelope for the whole nozzle length
-        if self.part_bvh.check_capsule_collision(p_start, p_end, self.profile.nozzle_holder_radius / 2.0):
-            # Using radius/2 for the nozzle shaft, ideally we'd model a cone or step
+        # Only check the top of the nozzle (the holder) against the mesh.
+        # The nozzle tip is meant to be touching the mesh, so a full capsule test fails immediately.
+        # We check if the holder itself (at p_end) is within its radius of the mesh.
+        dist = self.part_bvh.query_distance(np.array([p_end]))[0]
+        if dist < self.profile.nozzle_holder_radius:
             return "part"
             
         return None
