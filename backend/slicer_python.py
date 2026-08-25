@@ -1,5 +1,10 @@
 import math
 import struct
+from surface_field import SurfaceField, SurfaceFieldConfig
+from bvh import MeshBVH
+from collision import CollisionEngine
+from models import MachineProfile, FeaturePath
+
 import json
 import array
 import tempfile
@@ -278,65 +283,47 @@ def generate_infill(segments, min_x, max_x, min_y, max_y, line_width, pattern="l
                 
 def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0, infill_pattern="lines"):
     original_triangles, min_b, max_b = load_stl(file_bytes, model_scale, rot_x, rot_y, rot_z, pos_x, pos_y)
+    min_x, min_y, min_z = min_b
+    max_x, max_y, max_z = max_b
+    
+    field_config = SurfaceFieldConfig(
+        amplitude=wave_amplitude,
+        wave_length_x=1.0 / wave_frequency if wave_frequency > 0 else 50.0,
+        wave_length_y=1.0 / wave_frequency if wave_frequency > 0 else 50.0,
+        fade_height=15.0
+    )
+    surface_field = SurfaceField(field_config)
+    
+    import numpy as np
+    bvh_vertices = []
+    bvh_faces = []
+    v_idx = 0
+    for t in original_triangles:
+        bvh_vertices.extend([
+            [t[0], t[1], t[2]],
+            [t[3], t[4], t[5]],
+            [t[6], t[7], t[8]]
+        ])
+        bvh_faces.append([v_idx, v_idx+1, v_idx+2])
+        v_idx += 3
+    mesh_bvh = MeshBVH(np.array(bvh_vertices), np.array(bvh_faces))
+    machine_profile = MachineProfile()
+    collision_engine = CollisionEngine(machine_profile, mesh_bvh, bed_center_z)
+    
     
     processed_triangles = []
     
     fade_height = 15.0
     
-    def get_attenuation(z):
-        if z <= 0.0: return 0.0
-        if z >= fade_height: return 1.0
-        return z / fade_height
     
     def distort_mesh_z(x, y, z):
-        wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
-        return z - get_attenuation(z) * wave
+        return surface_field.distort_z(x, y, z)
         
     def distort_toolpath_z(x, y, z_dist):
-        """
-        Inverse of distort_mesh_z: given a distorted z coordinate (z_dist), recover
-        the original undistorted z (z_orig) so that the toolpath correctly follows
-        the distorted mesh surface.
-
-        BUG FIX: Guarded the denominator more robustly.  The original check
-        `denom <= 0.01` could still produce huge values when wave is just under
-        fade_height, and the condition fired incorrectly when wave was negative
-        (denom > 1.0 is fine but denom could be 0.01 < x < 0.99 and still
-        numerically unstable for very large amplitudes). We now clamp to the
-        full-wave approximation whenever |denom| < 0.05.
-        """
-        wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
-        if z_dist <= 0.0:
-            return z_dist
-
-        # At or above fade_height the warp is fully applied
-        z_dist_fade = fade_height - wave
-        if z_dist >= z_dist_fade:
-            return z_dist + wave
-
-        # In the linear fade zone: z_dist = z_orig * (1 - wave/fade_height)
-        # => z_orig = z_dist / (1 - wave/fade_height)
-        denom = 1.0 - (wave / fade_height)
-        # BUG FIX: Clamp denominator — if |denom| is too small the inversion
-        # blows up; fall back to the simple full-wave addition in that case.
-        if abs(denom) < 0.05:
-            return z_dist + wave
-
-        return z_dist / denom
+        return surface_field.inverse_distort_z(x, y, z_dist)
         
     def get_wavy_normal(x, y, true_z):
-        if wave_amplitude == 0.0:
-            return 0.0, 0.0, 1.0
-            
-        att = get_attenuation(true_z)
-        if att == 0.0:
-            return 0.0, 0.0, 1.0
-            
-        df_dx = att * wave_amplitude * wave_frequency * math.cos(wave_frequency * x) * math.cos(wave_frequency * y)
-        df_dy = -att * wave_amplitude * wave_frequency * math.sin(wave_frequency * x) * math.sin(wave_frequency * y)
-        nx, ny, nz = -df_dx, -df_dy, 1.0
-        length = math.sqrt(nx*nx + ny*ny + nz*nz)
-        return nx/length, ny/length, nz/length
+        return surface_field.get_normal(x, y, true_z)
 
     def resample_pts(p1, p2, max_len=0.5):
         dx, dy = p2[0] - p1[0], p2[1] - p1[1]
@@ -726,6 +713,32 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         points_json["layer"].append(layer)
         points_json["type"].append(0 if ptype == "perimeter" else 1)
         
+    # ----------------------------------------------------
+    # COLLISION SWEEP CHECK (Step 8 of Action Plan)
+    # ----------------------------------------------------
+    feature_paths = []
+    current_fp = None
+    last_id = -1
+    for pt in path:
+        px, py, pz, nx, ny, nz, layer, ptype, current_path_id = pt
+        if current_path_id != last_id or current_fp is None:
+            if current_fp is not None:
+                feature_paths.append(current_fp)
+            current_fp = FeaturePath(
+                points=[], normals=[], layer_idx=layer, 
+                feature_type=ptype, path_id=current_path_id
+            )
+            last_id = current_path_id
+        current_fp.points.append((px, py, pz))
+        current_fp.normals.append((nx, ny, nz))
+    if current_fp:
+        feature_paths.append(current_fp)
+        
+    for fp in feature_paths:
+        reports = collision_engine.sweep_check_path(fp)
+        if reports:
+            return {"error": f"Collision detected on {fp.feature_type} layer {fp.layer_idx}: {reports[0].limiting_surface} collision. {reports[0].suggested_remedy}"}
+    
     # Use standard kinematics and gcode modules
     from kinematics import Kinematics5Axis
     from gcode import GCodeGenerator
