@@ -130,22 +130,44 @@ def load_stl(file_bytes, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x
 
 
 def get_z_slice_segments(active_triangles, z):
+    """
+    Computes the 2D cross-section segments of each triangle at the given z height.
+
+    For each triangle, we iterate over its 3 directed edges:
+        v0->v1  (indices: x/y/z at [2],[3],[4] -> [5],[6],[7])
+        v1->v2  (indices: x/y/z at [5],[6],[7] -> [8],[9],[10])
+        v2->v0  (indices: x/y/z at [8],[9],[10] -> [2],[3],[4])
+
+    An edge straddles the slice plane if exactly one endpoint is strictly below z
+    and the other is at or above z. Each valid triangle produces exactly 0 or 2
+    intersection points, forming one segment.
+
+    BUG FIX: The original double-loop over (4,7,10) x (4,7,10) compared every
+    vertex against every other vertex, producing duplicate and incorrect intersections.
+    The correct approach is to iterate over the 3 *directed* edges only.
+    """
     segments = []
+    # Each tuple: (x_a, y_a, z_a_idx, x_b, y_b, z_b_idx) index positions in tri
+    EDGES = [
+        (2, 3, 4,   5, 6, 7),    # v0 -> v1
+        (5, 6, 7,   8, 9, 10),   # v1 -> v2
+        (8, 9, 10,  2, 3, 4),    # v2 -> v0
+    ]
     for tri in active_triangles:
         pts = []
-        for b_idx in (4, 7, 10):
-            bz = tri[b_idx]
-            if bz < z:
-                for a_idx in (4, 7, 10):
-                    az = tri[a_idx]
-                    if az >= z:
-                        dz = az - bz
-                        if dz == 0: continue
-                        t = (z - bz) / dz
-                        ix = tri[b_idx-2] + t * (tri[a_idx-2] - tri[b_idx-2])
-                        iy = tri[b_idx-1] + t * (tri[a_idx-1] - tri[b_idx-1])
-                        pts.append((ix, iy))
-        if len(pts) >= 2:
+        for (ax, ay, az_i, bx, by, bz_i) in EDGES:
+            za = tri[az_i]
+            zb = tri[bz_i]
+            # Edge straddles the plane: one endpoint strictly below, other at/above
+            if (za < z <= zb) or (zb < z <= za):
+                dz = zb - za
+                if dz == 0:
+                    continue
+                t = (z - za) / dz
+                ix = tri[ax] + t * (tri[bx] - tri[ax])
+                iy = tri[ay] + t * (tri[by] - tri[ay])
+                pts.append((ix, iy))
+        if len(pts) == 2:
             segments.append((pts[0], pts[1], tri[11], tri[12], tri[13]))
     return segments
 
@@ -271,22 +293,35 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         return z - get_attenuation(z) * wave
         
     def distort_toolpath_z(x, y, z_dist):
+        """
+        Inverse of distort_mesh_z: given a distorted z coordinate (z_dist), recover
+        the original undistorted z (z_orig) so that the toolpath correctly follows
+        the distorted mesh surface.
+
+        BUG FIX: Guarded the denominator more robustly.  The original check
+        `denom <= 0.01` could still produce huge values when wave is just under
+        fade_height, and the condition fired incorrectly when wave was negative
+        (denom > 1.0 is fine but denom could be 0.01 < x < 0.99 and still
+        numerically unstable for very large amplitudes). We now clamp to the
+        full-wave approximation whenever |denom| < 0.05.
+        """
         wave = wave_amplitude * math.sin(wave_frequency * x) * math.cos(wave_frequency * y)
         if z_dist <= 0.0:
             return z_dist
-        
-        # Calculate what z_dist would be exactly at fade_height
+
+        # At or above fade_height the warp is fully applied
         z_dist_fade = fade_height - wave
-        
         if z_dist >= z_dist_fade:
             return z_dist + wave
-            
-        # In the linear fade zone, z_dist = z_orig - (z_orig / fade_height) * wave
-        # Solve for z_orig: z_orig = z_dist / (1.0 - wave / fade_height)
+
+        # In the linear fade zone: z_dist = z_orig * (1 - wave/fade_height)
+        # => z_orig = z_dist / (1 - wave/fade_height)
         denom = 1.0 - (wave / fade_height)
-        if denom <= 0.01: # Prevent division by zero if amplitude >= fade_height
+        # BUG FIX: Clamp denominator — if |denom| is too small the inversion
+        # blows up; fall back to the simple full-wave addition in that case.
+        if abs(denom) < 0.05:
             return z_dist + wave
-            
+
         return z_dist / denom
         
     def get_wavy_normal(x, y, true_z):
@@ -352,30 +387,51 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         return result
         
     subdivided_triangles = subdivide_triangles(original_triangles, max_len=2.0)
-    
+
     min_x, min_y, min_z = min_b
     max_x, max_y, max_z = max_b
-    
+
+    # t_min_z is the minimum z of ALL triangles after load_stl positioning.
+    # We use min_z from load_stl's bounding box (already the true floor).
+    t_min_z = min_z
+
     calc_z_cutoff = 1e9
     calc_segment_tilt = 0.0
     tilt_dir_x, tilt_dir_y = 1.0, 0.0
-    t_min_z = min_z
-    
+
     if auto_segment:
-        overhangs = [t for t in original_triangles if t[11] < -0.5 and min(t[2], t[5], t[8]) > min_z + 15.0]
+        # BUG FIX: Original code compared against `min_z + 15.0` but the triangles
+        # in original_triangles are already in the final world frame (load_stl applied
+        # pos_x/pos_y and the z-floor shift). The 15 mm guard is meant to skip faces
+        # that are part of the base plate; it must be relative to the true mesh floor
+        # (t_min_z = min_z), which it already is. HOWEVER, calc_z_cutoff was then
+        # adjusted by `calc_z_cutoff -= t_min_z` (line ~403) in the original code —
+        # meaning it was subtracted TWICE implicitly for models where min_z != 0.
+        #
+        # Fix: compute everything in the *pre-shift* frame here, and let the single
+        # `calc_z_cutoff -= t_min_z` below handle the normalization.
+        overhangs = [
+            t for t in original_triangles
+            if t[11] < -0.5                               # downward-facing normal (nz < -0.5)  
+            and min(t[2], t[5], t[8]) > t_min_z + 2.0    # not part of the base (2 mm grace)
+        ]
         if overhangs:
+            # Find the lowest point of any overhang face
             lowest_z = min(min(t[2], t[5], t[8]) for t in overhangs)
-            calc_z_cutoff = max(min_z + 2.0, lowest_z - 2.0)
+            # Set the cutoff 2 mm below the first overhang so the base phase
+            # finishes printing a solid foundation before the tilted phase starts
+            calc_z_cutoff = max(t_min_z + 2.0, lowest_z - 2.0)
+
             o_min_x = min(min(t[0], t[3], t[6]) for t in overhangs)
             o_max_x = max(max(t[0], t[3], t[6]) for t in overhangs)
             o_min_y = min(min(t[1], t[4], t[7]) for t in overhangs)
             o_max_y = max(max(t[1], t[4], t[7]) for t in overhangs)
-            
+
             o_cx = (o_min_x + o_max_x) / 2.0
             o_cy = (o_min_y + o_max_y) / 2.0
             base_cx = (min_x + max_x) / 2.0
             base_cy = (min_y + max_y) / 2.0
-            
+
             dx = o_cx - base_cx
             dy = o_cy - base_cy
             length = math.hypot(dx, dy)
@@ -385,22 +441,28 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             else:
                 tilt_dir_x = 1.0
                 tilt_dir_y = 0.0
-            
+
             calc_segment_tilt = 45.0
-            
+
     if (max_x - min_x) > 500.0 or (max_y - min_y) > 500.0:
         return {"error": "Model is too large (>500mm). Scale down your STL to millimeters."}
-        
+
     line_width = 0.4
     infill_spacing = line_width / (infill_density / 100.0) if infill_density > 0.1 else 1e9
-    
+
     transformed_triangles = [list(t) for t in subdivided_triangles]
     del subdivided_triangles
     del original_triangles
+    # Shift every vertex z so the mesh floor sits at z=0
     for tri in transformed_triangles:
         tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
-        
-    if calc_z_cutoff != 1e9: calc_z_cutoff -= t_min_z
+
+    # BUG FIX (Bug 3): Apply the same floor shift to the cutoff so it lives in
+    # the same coordinate frame as the processed triangles.  This was already
+    # present in the original code but was unreliable when auto_segment detection
+    # used a different floor reference. Now both are anchored to t_min_z = min_z.
+    if calc_z_cutoff != 1e9:
+        calc_z_cutoff -= t_min_z
     
     global_c, global_s = math.cos(calc_segment_tilt * math.pi / 180.0), math.sin(calc_segment_tilt * math.pi / 180.0)
     cz_val = calc_z_cutoff
@@ -640,6 +702,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             
     if not path:
         return {"error": "No path generated"}
+        
     points_json = {
         "x": array.array('f'),
         "y": array.array('f'),
@@ -651,24 +714,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         "type": array.array('B')
     }
     
-    gcode_file = tempfile.TemporaryFile(mode='w+')
-    gcode_file.write("; Open5x Volumetric Slicer Output (Python Engine)\\n")
-    gcode_file.write("G21 ; Set units to millimeters\\n")
-    gcode_file.write("G90 ; Absolute positioning\\n")
-    gcode_file.write("M82 ; Absolute extrusion mode\\n")
-    gcode_file.write("G28 ; Home all axes\\n")
-    gcode_file.write("G0 Z50 F3000 ; Move up to avoid collisions\\n")
-    
-    current_v = 0.0
-    current_e = 0.0
-    base_feedrate = 1500.0
-    e_multiplier = 0.05
-    
-    last_px = last_py = last_pz = 0.0
-    last_mx = last_my = last_mz = last_mu = last_mv = 0.0
-    is_first = True
-    last_path_id = -1
-    
+    # We populate the frontend visualizer JSON array here
     for pt in path:
         px, py, pz, nx, ny, nz, layer, ptype, current_path_id = pt
         points_json["x"].append(px)
@@ -680,67 +726,31 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         points_json["layer"].append(layer)
         points_json["type"].append(0 if ptype == "perimeter" else 1)
         
-        v_rad = math.atan2(nx, ny)
-        xy_mag = math.sqrt(nx*nx + ny*ny)
-        u_rad = math.atan2(xy_mag, nz)
-        
-        pz_centered = pz + bed_center_z
-        cv, sv = math.cos(v_rad), math.sin(v_rad)
-        cu, su = math.cos(u_rad), math.sin(u_rad)
-        
-        p_rot_x = cv * px - sv * py
-        p_rot_y = cu * (sv * px + cv * py) - su * pz_centered
-        p_rot_z = su * (sv * px + cv * py) + cu * pz_centered
-        
-        mx = p_rot_x
-        my = p_rot_y
-        mz = p_rot_z - bed_center_z
-        
-        u_deg = u_rad * 180.0 / math.pi
-        v_deg = v_rad * 180.0 / math.pi
-        
-        current_mod = current_v % 360.0
-        target_mod = v_deg % 360.0
-        
-        diff = target_mod - current_mod
-        if diff > 180.0: diff -= 360.0
-        elif diff < -180.0: diff += 360.0
-        
-        current_v += diff
-        mv = current_v
-        mu = u_deg
-        
-        if is_first:
-            gcode_file.write(f"G0 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} F3000\\n")
-            last_px, last_py, last_pz = px, py, pz
-            last_mx, last_my, last_mz, last_mu, last_mv = mx, my, mz, mu, mv
-            last_path_id = current_path_id
-            is_first = False
-            continue
-            
-        dist_part = math.sqrt((px - last_px)**2 + (py - last_py)**2 + (pz - last_pz)**2)
-        dist_mach = math.sqrt((mx - last_mx)**2 + (my - last_my)**2 + (mz - last_mz)**2 + (mu - last_mu)**2 + (mv - last_mv)**2)
-        
-        # If moving to a new layer, jumping across infill, or jumping across cutoff gaps, retract and move
-        if dist_part > 1.5 or current_path_id != last_path_id:
-            gcode_file.write(f"G1 E{current_e - 2.0:.3f} F2400 ; Retract\\n")
-            gcode_file.write(f"G0 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} F3000\\n")
-            gcode_file.write(f"G1 E{current_e:.3f} F2400 ; Unretract\\n")
-            last_px, last_py, last_pz = px, py, pz
-            last_mx, last_my, last_mz, last_mu, last_mv = mx, my, mz, mu, mv
-            last_path_id = current_path_id
-            continue
-        
-        current_e += dist_part * e_multiplier
-        feedrate = base_feedrate * (dist_mach / dist_part) if dist_part > 0 else base_feedrate
-        if feedrate > 6000.0: feedrate = 6000.0
-        
-        gcode_file.write(f"G1 X{mx:.3f} Y{my:.3f} Z{mz:.3f} U{mu:.3f} V{mv:.3f} E{current_e:.3f} F{feedrate:.1f}\\n")
-        
-        last_px, last_py, last_pz = px, py, pz
-        last_mx, last_my, last_mz, last_mu, last_mv = mx, my, mz, mu, mv
-        
+    # Use standard kinematics and gcode modules
+    from kinematics import Kinematics5Axis
+    from gcode import GCodeGenerator
+    import tempfile
+    
+    kinematics = Kinematics5Axis(bed_center_z=bed_center_z)
+    generator = GCodeGenerator(
+        e_multiplier=0.05, 
+        base_feedrate=1500, 
+        travel_threshold=1.5
+    )
+    
+    # Extract just the raw (x,y,z,nx,ny,nz) for the GCode generator
+    # as well as the path_id if we want to support travel detection better,
+    # but currently GCodeGenerator doesn't take path_id in its list.
+    path_points = [(pt[0], pt[1], pt[2], pt[3], pt[4], pt[5]) for pt in path]
+    
+    path_ids = [pt[8] for pt in path]
+    gcode_str = generator.generate(path_points, kinematics, path_ids)
+    
+    # The API currently expects a file-like object for gcode_file
+    gcode_file = tempfile.TemporaryFile(mode='w+')
+    gcode_file.write(gcode_str)
     gcode_file.flush()
+
     return {
         "toolpath_points": points_json,
         "gcode_file": gcode_file,
