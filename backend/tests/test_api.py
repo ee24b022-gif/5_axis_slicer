@@ -1,3 +1,4 @@
+import pytest
 import asyncio
 import io
 import os
@@ -6,6 +7,7 @@ import subprocess
 import json
 import trimesh
 
+@pytest.mark.asyncio
 async def test_slice():
     # 1. Create a large dummy mesh to simulate a real STL
     print("Creating dummy mesh...")
@@ -43,4 +45,5 @@ async def test_slice():
     if os.path.exists(tmp_stl):
         os.remove(tmp_stl)
 
-asyncio.run(test_slice())
+if __name__ == "__main__":
+    asyncio.run(test_slice())

@@ -3,7 +3,7 @@ import struct
 from surface_field import SurfaceField, SurfaceFieldConfig
 from bvh import MeshBVH
 from collision import CollisionEngine
-from models import MachineProfile, FeaturePath
+from models import SlicerMachineProfile, FeaturePath
 from regions import AreaLogic
 
 import json
@@ -204,7 +204,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         bvh_faces.append([v_idx, v_idx+1, v_idx+2])
         v_idx += 3
     mesh_bvh = MeshBVH(np.array(bvh_vertices), np.array(bvh_faces))
-    machine_profile = MachineProfile()
+    machine_profile = SlicerMachineProfile()
     collision_engine = CollisionEngine(machine_profile, mesh_bvh, bed_center_z)
     area_logic = AreaLogic(extrusion_width=0.4)
     

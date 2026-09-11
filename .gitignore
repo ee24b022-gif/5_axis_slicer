@@ -12,3 +12,7 @@ output.gcode
 
 # OS
 .DS_Store
+*.db
+*.stl
+*.json
+backend/test_output.txt

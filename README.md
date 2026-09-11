@@ -9,15 +9,24 @@ Built for the [Open5x](https://github.com/Open5x) hardware architecture, this pr
 
 ## Getting Started
 
-### Backend
-1. Navigate to the `backend` directory.
-2. Install the requirements: `pip install -r requirements.txt`
-3. Run the API server: `uvicorn api:app --reload`
+### Local Development
+We provide a `Makefile` to simplify local development.
 
-### Frontend
-1. Navigate to the `frontend` directory.
-2. Install dependencies: `npm install`
-3. Start the dev server: `npm run dev`
+1. Install dependencies for both frontend and backend:
+   ```bash
+   make install
+   ```
+2. Start the development servers (requires pm2):
+   ```bash
+   make dev
+   ```
+
+The backend API will run on port 8001 and the frontend will run on its default Vite port.
+
+### Manual Setup
+If you prefer not to use the Makefile:
+- **Backend**: `cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && uvicorn api:app --reload`
+- **Frontend**: `cd frontend && npm install && npm run dev`
 
 ## License
 This project is licensed under the MIT License.

@@ -1,10 +1,10 @@
 import numpy as np
 from typing import List, Optional
-from models import MachineProfile, MachinePose, CollisionReport, FeaturePath
+from models import SlicerMachineProfile, MachinePose, CollisionReport, FeaturePath
 from bvh import MeshBVH
 
 class CollisionEngine:
-    def __init__(self, profile: MachineProfile, part_bvh: MeshBVH, bed_center_z: float = 0.0):
+    def __init__(self, profile: SlicerMachineProfile, part_bvh: MeshBVH, bed_center_z: float = 0.0):
         self.profile = profile
         self.part_bvh = part_bvh
         self.bed_center_z = bed_center_z
