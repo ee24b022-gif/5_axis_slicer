@@ -71,10 +71,14 @@ class RotaryGCodeGenerator:
             mx, my, mz, rotary_dict = self.kinematics.calculate_ik(x, y, z, nx, ny, nz)
             
             # Format the rotary string part
-            rotary_str = " ".join([f"{self.settings.axis_mapping[k]}{v:.3f}" for k, v in rotary_dict.items()])
+            if self.settings.dialect == "klipper_manual_stepper_ab":
+                rotary_cmds = [f"MANUAL_STEPPER STEPPER=stepper_{k.lower()} POS={v:.3f}" for k, v in rotary_dict.items()]
+                rotary_str = "\n" + "\n".join(rotary_cmds) if rotary_cmds else ""
+            else:
+                rotary_str = " " + " ".join([f"{self.settings.axis_mapping[k]}{v:.3f}" for k, v in rotary_dict.items()]) if rotary_dict else ""
             
             if self.last_pos is None:
-                gcode.append(f"G0 {x_ax}{mx:.3f} {y_ax}{my:.3f} {z_ax}{mz:.3f} {rotary_str} F{self.settings.feed_limits.travel:.0f}")
+                gcode.append(f"G0 {x_ax}{mx:.3f} {y_ax}{my:.3f} {z_ax}{mz:.3f} F{self.settings.feed_limits.travel:.0f}{rotary_str}")
                 self.last_pos = (mx, my, mz, rotary_dict, x, y, z, current_path_id)
                 continue
                 
@@ -84,7 +88,7 @@ class RotaryGCodeGenerator:
             
             if dist_part > self.travel_threshold or (path_ids and current_path_id != last_path_id):
                 self._retract(gcode)
-                gcode.append(f"G0 {x_ax}{mx:.3f} {y_ax}{my:.3f} {z_ax}{mz:.3f} {rotary_str} F{self.settings.feed_limits.travel:.0f} ; Travel")
+                gcode.append(f"G0 {x_ax}{mx:.3f} {y_ax}{my:.3f} {z_ax}{mz:.3f} F{self.settings.feed_limits.travel:.0f} ; Travel{rotary_str}")
                 self._unretract(gcode)
             else:
                 if dist_part > 1e-6:
@@ -93,7 +97,7 @@ class RotaryGCodeGenerator:
                     
                     # Normalize feedrate across all physically traveling axes (simplified)
                     feedrate = self.settings.feed_limits.print
-                    gcode.append(f"G1 {x_ax}{mx:.3f} {y_ax}{my:.3f} {z_ax}{mz:.3f} {rotary_str} {e_ax}{self.current_e:.3f} F{feedrate:.1f}")
+                    gcode.append(f"G1 {x_ax}{mx:.3f} {y_ax}{my:.3f} {z_ax}{mz:.3f} {e_ax}{self.current_e:.3f} F{feedrate:.1f}{rotary_str}")
                     
             self.last_pos = (mx, my, mz, rotary_dict, x, y, z, current_path_id)
             

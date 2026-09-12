@@ -93,10 +93,15 @@ async def upload_mesh(
 @router.get("/{mesh_id}", response_model=MeshResponse)
 def get_mesh_metadata(
     mesh_id: uuid.UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_actor: Actor = Depends(get_current_actor)
 ):
     mesh_repo = MeshRepository(db)
     mesh = mesh_repo.get_by_id(mesh_id)
     if not mesh:
         raise HTTPException(status_code=404, detail="Mesh not found")
+        
+    from authorization import enforce_ownership
+    enforce_ownership(mesh, "uploader_id", current_actor, "Mesh")
+        
     return mesh

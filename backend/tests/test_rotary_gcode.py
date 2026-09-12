@@ -33,8 +33,8 @@ def test_rotary_generation():
     assert "A" in metadata["axes"]
     assert "B" in metadata["axes"]
     
-    assert "G0 X0.000 Y0.000 Z0.000 A0.000 B0.000 F3000" in gcode
-    assert "G1 X1.000 Y0.000 Z0.000 A0.000 B0.000 E0.050 F1500.0" in gcode
+    assert "G0 X0.000 Y0.000 Z0.000 F3000 A0.000 B0.000" in gcode
+    assert "G1 X1.000 Y0.000 Z0.000 E0.050 F1500.0 A0.000 B0.000" in gcode
 
 def test_unverified_mapping_blocks():
     settings = DialectSettings(

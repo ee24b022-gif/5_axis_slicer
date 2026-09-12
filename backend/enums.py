@@ -80,6 +80,7 @@ class CoordinateMode(StrEnum):
 class GCodeDialect(StrEnum):
     MARLIN = 'marlin'
     KLIPPER = 'klipper'
+    KLIPPER_MANUAL_STEPPER_AB = 'klipper_manual_stepper_ab'
     RRF = 'rrf'
     MACH3 = 'mach3'
     LINUXCNC = 'linuxcnc'

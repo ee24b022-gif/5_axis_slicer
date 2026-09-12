@@ -143,3 +143,54 @@ def restore_segments_to_world(segments: np.ndarray, z_height: float, transform_m
     # 6. Reshape back to (N, 2, 3)
     return pts_3d_transformed.reshape(N, 2, 3)
 
+class TableTableFractalAdapter:
+    """
+    Transforms part coordinates/normals into machine coordinates 
+    using the table_table_fractal_ab convention.
+    It strictly uses QB @ QA composition order.
+    """
+    def __init__(self, bed_center_z: float = 0.0):
+        self.bed_center_z = bed_center_z
+
+    def calculate_ik(self, x: float, y: float, z: float, nx: float, ny: float, nz: float):
+        import math
+        # Validate unit normal
+        n_length = math.hypot(nx, ny, nz)
+        if not math.isclose(n_length, 1.0, rel_tol=1e-5):
+            raise ValueError(f"Invalid non-unit normal vector: length is {n_length}")
+            
+        a_rad = math.atan2(nx, ny)
+        xy_mag = math.hypot(nx, ny)
+        b_rad = math.atan2(xy_mag, nz)
+        
+        # Position vector relative to rotation center
+        p = np.array([x, y, z + self.bed_center_z])
+        
+        cos_a = math.cos(a_rad)
+        sin_a = math.sin(a_rad)
+        QA = np.array([
+            [cos_a, -sin_a, 0],
+            [sin_a,  cos_a, 0],
+            [0,      0,     1]
+        ])
+        
+        cos_b = math.cos(b_rad)
+        sin_b = math.sin(b_rad)
+        QB = np.array([
+            [1, 0,      0],
+            [0, cos_b, -sin_b],
+            [0, sin_b,  cos_b]
+        ])
+        
+        # Enforce QB @ QA matrix composition order for table_table_fractal_ab
+        R_total = QB @ QA
+        p_rotated = R_total @ p
+        
+        machine_x = float(p_rotated[0])
+        machine_y = float(p_rotated[1])
+        machine_z = float(p_rotated[2] - self.bed_center_z)
+        
+        a_deg = math.degrees(a_rad)
+        b_deg = math.degrees(b_rad)
+        
+        return machine_x, machine_y, machine_z, {'A': a_deg, 'B': b_deg}

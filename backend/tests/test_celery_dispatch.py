@@ -105,3 +105,24 @@ def test_production_dispatch(mock_delay, mock_settings, setup_data):
     args, kwargs = mock_delay.call_args
     assert args[0] == job_resp["id"]
     assert args[1] == mesh.storage_uri
+
+import pytest
+from dependencies import get_current_actor, Actor
+from main import app
+from enums import UserRole
+import uuid
+
+@pytest.fixture(autouse=True)
+def override_auth_admin():
+    from models import User
+    admin_user = User(id=uuid.uuid4(), username="test_admin_" + str(uuid.uuid4())[:8], email="admin_" + str(uuid.uuid4())[:8] + "@example.com", hashed_password="pw", role=UserRole.ADMIN)
+    actor = Actor(
+        actor_type="USER",
+        user_id=admin_user.id,
+        key_id=None,
+        scopes=["*"],
+        user=admin_user
+    )
+    app.dependency_overrides[get_current_actor] = lambda: actor
+    yield
+    app.dependency_overrides.clear()

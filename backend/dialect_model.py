@@ -29,8 +29,9 @@ class DialectSettings(BaseModel):
         for k, v in self.axis_mapping.items():
             if k.lower() not in allowed_logical:
                 raise ValueError(f"Unknown logical axis: {k}")
-            if not v.isalpha() or len(v) != 1:
-                raise ValueError(f"Axis mapping target must be a single letter, got '{v}'")
+            if self.dialect != GCodeDialect.KLIPPER_MANUAL_STEPPER_AB:
+                if not v.isalpha() or len(v) != 1:
+                    raise ValueError(f"Axis mapping target must be a single letter, got '{v}'")
         return self
 
     @model_validator(mode='after')
@@ -38,7 +39,7 @@ class DialectSettings(BaseModel):
         ALLOWED_GCODE_TOKENS = {
             "G0", "G1", "G2", "G3", "G4", "G10", "G11", "G20", "G21", "G28", "G29", "G90", "G91", "G92",
             "M82", "M83", "M104", "M106", "M107", "M109", "M114", "M117", "M140", "M190", "M220", "M221", "M420",
-            "T0", "T1"
+            "T0", "T1", "HOME_AB", "Z_TILT_ADJUST", "DIAG_CENTRALIZE"
         }
         
         for field_name in ['header', 'footer', 'clearance_moves']:

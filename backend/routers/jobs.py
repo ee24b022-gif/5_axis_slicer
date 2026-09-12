@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from enums import JobStage, DiagnosticSeverity, DiagnosticStatus
 from export_gate import ExportGateService
 from progress_model import StageProgressEvent
-
+from authorization import require_job_owner, enforce_ownership
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 def _run_job_lifecycle(
@@ -135,21 +135,19 @@ def submit_job(
 @router.get("/{job_id}", response_model=JobResponse)
 def get_job_status(
     job_id: uuid.UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_actor: Actor = Depends(get_current_actor)
 ):
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = require_job_owner(job_id, db, current_actor)
     return job
 
 @router.get("/{job_id}/events")
 async def get_job_events(
     job_id: uuid.UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_actor: Actor = Depends(get_current_actor)
 ):
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = require_job_owner(job_id, db, current_actor)
         
     async def event_generator():
         terminal_states = {JobStatus.COMPLETE, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PARTIAL}
@@ -198,11 +196,10 @@ async def get_job_events(
 def cancel_job(
     job_id: uuid.UUID,
     request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_actor: Actor = Depends(get_current_actor)
 ):
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = require_job_owner(job_id, db, current_actor)
         
     job = JobLifecycle.cancel_job(db, job)
     
@@ -217,11 +214,10 @@ def get_job_diagnostics(
     job_id: uuid.UUID,
     severity: Optional[DiagnosticSeverity] = None,
     stage: Optional[JobStage] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_actor: Actor = Depends(get_current_actor)
 ):
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = require_job_owner(job_id, db, current_actor)
         
     query = db.query(Diagnostic).filter(Diagnostic.job_id == job_id)
     if severity:
@@ -239,11 +235,10 @@ def get_job_preview(
     layer_idx_min: Optional[int] = None,
     layer_idx_max: Optional[int] = None,
     include_supports: bool = True,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_actor: Actor = Depends(get_current_actor)
 ):
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = require_job_owner(job_id, db, current_actor)
         
     query = db.query(Layer).filter(Layer.job_id == job_id)
     
@@ -273,16 +268,13 @@ def get_job_export(
     db: Session = Depends(get_db),
     current_actor: Actor = Depends(get_current_actor)
 ):
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-        
-    if job.creator_id != current_actor.user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this job's export")
+    job = require_job_owner(job_id, db, current_actor)
         
     export = db.query(Export).filter(Export.job_id == job_id).order_by(Export.created_at.desc()).first()
     if not export:
         raise HTTPException(status_code=404, detail="Export not found for this job")
+        
+    enforce_ownership(export, "creator_id", current_actor, "Export")
         
     if getattr(export, "cleaned_up_at", None):
         raise HTTPException(status_code=410, detail="Export artifact has been cleaned up and is no longer available")
