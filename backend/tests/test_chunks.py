@@ -30,7 +30,7 @@ def test_chunk_creation_and_binding(session):
         size_bytes=1, triangle_count=1, bound_min_x=0.0, bound_min_y=0.0, bound_min_z=0.0,
         bound_max_x=1.0, bound_max_y=1.0, bound_max_z=1.0
     )
-    profile = MachineProfile(name="N3", revision=1, dialect="d", contract={}, limits={}, author_id=user.id)
+    profile = MachineProfile(name="N3", revision=1, dialect="d", contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}}, limits={"ranges": {"X": (0, 300)}}, author_id=user.id)
     session.add_all([mesh, profile])
     session.commit()
     job = Job(creator_id=user.id, mesh_id=mesh.id, machine_profile_id=profile.id, mode=JobMode.THREE_AXIS, settings={}, engine_revision="1", input_hash="h")
@@ -74,7 +74,7 @@ def test_chunk_duplicate_index_rejected(session):
     session.commit()
 
     mesh = Mesh(uploader_id=user.id, content_hash="hash_c4", storage_uri="s", size_bytes=1, triangle_count=1, bound_min_x=0.0, bound_min_y=0.0, bound_min_z=0.0, bound_max_x=1.0, bound_max_y=1.0, bound_max_z=1.0)
-    profile = MachineProfile(name="N4", revision=1, dialect="d", contract={}, limits={}, author_id=user.id)
+    profile = MachineProfile(name="N4", revision=1, dialect="d", contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}}, limits={"ranges": {"X": (0, 300)}}, author_id=user.id)
     session.add_all([mesh, profile])
     session.commit()
     job = Job(creator_id=user.id, mesh_id=mesh.id, machine_profile_id=profile.id, mode=JobMode.THREE_AXIS, settings={}, engine_revision="1", input_hash="h2")
@@ -99,7 +99,7 @@ def test_chunk_transform_validation_fails(session):
     session.add(user)
     session.commit()
     mesh = Mesh(uploader_id=user.id, content_hash="hash_c5", storage_uri="s", size_bytes=1, triangle_count=1, bound_min_x=0.0, bound_min_y=0.0, bound_min_z=0.0, bound_max_x=1.0, bound_max_y=1.0, bound_max_z=1.0)
-    profile = MachineProfile(name="N5", revision=1, dialect="d", contract={}, limits={}, author_id=user.id)
+    profile = MachineProfile(name="N5", revision=1, dialect="d", contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}}, limits={"ranges": {"X": (0, 300)}}, author_id=user.id)
     session.add_all([mesh, profile])
     session.commit()
     job = Job(creator_id=user.id, mesh_id=mesh.id, machine_profile_id=profile.id, mode=JobMode.THREE_AXIS, settings={}, engine_revision="1", input_hash="h3")
@@ -123,7 +123,7 @@ def test_chunk_ordering_deterministic(session):
     session.add(user)
     session.commit()
     mesh = Mesh(uploader_id=user.id, content_hash="hash_c6", storage_uri="s", size_bytes=1, triangle_count=1, bound_min_x=0.0, bound_min_y=0.0, bound_min_z=0.0, bound_max_x=1.0, bound_max_y=1.0, bound_max_z=1.0)
-    profile = MachineProfile(name="N6", revision=1, dialect="d", contract={}, limits={}, author_id=user.id)
+    profile = MachineProfile(name="N6", revision=1, dialect="d", contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}}, limits={"ranges": {"X": (0, 300)}}, author_id=user.id)
     session.add_all([mesh, profile])
     session.commit()
     job = Job(creator_id=user.id, mesh_id=mesh.id, machine_profile_id=profile.id, mode=JobMode.THREE_AXIS, settings={}, engine_revision="1", input_hash="h4")
@@ -158,7 +158,7 @@ def test_chunk_cascade_delete(session):
         size_bytes=1, triangle_count=1, bound_min_x=0.0, bound_min_y=0.0, bound_min_z=0.0,
         bound_max_x=1.0, bound_max_y=1.0, bound_max_z=1.0
     )
-    profile = MachineProfile(name="N2", revision=1, dialect="d", contract={}, limits={}, author_id=user.id)
+    profile = MachineProfile(name="N2", revision=1, dialect="d", contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}}, limits={"ranges": {"X": (0, 300)}}, author_id=user.id)
     session.add_all([mesh, profile])
     session.commit()
     job = Job(creator_id=user.id, mesh_id=mesh.id, machine_profile_id=profile.id, mode=JobMode.THREE_AXIS, settings={}, engine_revision="1", input_hash="h")

@@ -29,8 +29,8 @@ def test_machine_profile_creation(session):
         name="PocketNC V2-10",
         revision=1,
         dialect="linuxcnc",
-        contract={"axis": "5"},
-        limits={"max_speed": 100},
+        contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}},
+        limits={"ranges": {"X": (0, 300)}},
         author_id=user.id
     )
     session.add(profile)
@@ -41,7 +41,7 @@ def test_machine_profile_creation(session):
     assert profile.name == "PocketNC V2-10"
     assert profile.revision == 1
     assert profile.dialect == "linuxcnc"
-    assert profile.contract == {"axis": "5"}
+    assert profile.contract == {"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}}
     assert profile.is_active is True
     assert profile.author.username == "author_user"
 
@@ -59,8 +59,8 @@ def test_machine_profile_unique_constraint(session):
         name="PocketNC V2-10",
         revision=1,
         dialect="linuxcnc",
-        contract={"axis": "5"},
-        limits={"max_speed": 100},
+        contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}},
+        limits={"ranges": {"X": (0, 300)}},
         author_id=user.id
     )
     session.add(profile1)
@@ -70,8 +70,8 @@ def test_machine_profile_unique_constraint(session):
         name="PocketNC V2-10",
         revision=1,
         dialect="linuxcnc",
-        contract={"axis": "5"},
-        limits={"max_speed": 100},
+        contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}},
+        limits={"ranges": {"X": (0, 300)}},
         author_id=user.id
     )
     session.add(profile2)
@@ -94,8 +94,8 @@ def test_machine_profile_cascade_delete(session):
         name="Test Machine",
         revision=1,
         dialect="marlin",
-        contract={"axis": "3"},
-        limits={"max_speed": 100},
+        contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}},
+        limits={"ranges": {"X": (0, 300)}},
         author_id=user.id
     )
     session.add(profile)

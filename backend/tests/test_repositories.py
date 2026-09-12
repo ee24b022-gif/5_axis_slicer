@@ -84,7 +84,7 @@ def test_chunk_repository_ordering(session):
         "bound_min_x": 0.0, "bound_min_y": 0.0, "bound_min_z": 0.0,
         "bound_max_x": 1.0, "bound_max_y": 1.0, "bound_max_z": 1.0
     })
-    p = profile_repo.create({"name": "p1", "revision": 1, "dialect": "d1", "contract": {}, "limits": {}, "author_id": u.id})
+    p = profile_repo.create({"name": "p1", "revision": 1, "dialect": "d1", "contract": {"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}}, "limits": {"ranges": {"X": (0, 300)}}, "author_id": u.id})
     j = job_repo.create({
         "creator_id": u.id, "mesh_id": m.id, "machine_profile_id": p.id,
         "mode": JobMode.THREE_AXIS, "settings": {}, "engine_revision": "1", "input_hash": "h1"

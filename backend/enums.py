@@ -63,3 +63,23 @@ class TokenStatus(StrEnum):
     ACTIVE = 'active'
     REVOKED = 'revoked'
     EXPIRED = 'expired'
+
+class AngleUnit(StrEnum):
+    DEGREES = 'degrees'
+    RADIANS = 'radians'
+
+class RotationConvention(StrEnum):
+    AC_TABLE = 'AC_TABLE'
+    BC_TABLE = 'BC_TABLE'
+    AB_HEAD = 'AB_HEAD'
+
+class CoordinateMode(StrEnum):
+    ABSOLUTE = 'absolute'
+    RELATIVE = 'relative'
+
+class GCodeDialect(StrEnum):
+    MARLIN = 'marlin'
+    KLIPPER = 'klipper'
+    RRF = 'rrf'
+    MACH3 = 'mach3'
+    LINUXCNC = 'linuxcnc'

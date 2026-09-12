@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, asc, desc
 
 from models import Base, User, Mesh, MachineProfile, Job, Chunk, Diagnostic, Export
-from enums import DiagnosticSeverity, ExportStatus
+from enums import DiagnosticSeverity, ExportStatus, JobStatus, ChunkValidity
 
 T = TypeVar("T", bound=Base)
 
@@ -98,6 +98,24 @@ class JobRepository(BaseRepository[Job]):
         stmt = select(Job).order_by(desc(Job.created_at)).limit(limit)
         return self.session.execute(stmt).scalars().all()
 
+    def update_job_progress(self, job_id: UUID, progress: float, status: Optional[JobStatus] = None, checkpoint_data: Optional[dict] = None) -> Optional[Job]:
+        job = self.get_by_id(job_id)
+        if not job:
+            return None
+        
+        job.progress = max(0.0, min(1.0, progress))
+        if status:
+            job.status = status
+            if status in [JobStatus.COMPLETE, JobStatus.FAILED, JobStatus.CANCELLED]:
+                from datetime import datetime, timezone
+                job.completed_at = datetime.now(timezone.utc)
+        if checkpoint_data:
+            job.checkpoint_data = checkpoint_data
+            
+        self.session.add(job)
+        self.session.flush()
+        return job
+
 
 class ChunkRepository(BaseRepository[Chunk]):
     def __init__(self, session: Session):
@@ -106,6 +124,25 @@ class ChunkRepository(BaseRepository[Chunk]):
     def get_chunks_for_job(self, job_id: UUID) -> Sequence[Chunk]:
         stmt = select(Chunk).where(Chunk.job_id == job_id).order_by(asc(Chunk.chunk_idx))
         return self.session.execute(stmt).scalars().all()
+
+    def update_chunk_checkpoint(self, chunk_id: UUID, validity: ChunkValidity, last_completed_layer: Optional[int], diagnostics: list[Diagnostic] = []) -> Optional[Chunk]:
+        chunk = self.session.get(Chunk, chunk_id)
+        if not chunk:
+            return None
+            
+        chunk.validity = validity
+        if last_completed_layer is not None:
+            chunk.last_completed_layer = last_completed_layer
+            
+        for diag in diagnostics:
+            # Ensure diagnostics are bound to the right chunk and job
+            diag.chunk_id = chunk.id
+            diag.job_id = chunk.job_id
+            self.session.add(diag)
+            
+        self.session.add(chunk)
+        self.session.flush()
+        return chunk
 
 
 class DiagnosticRepository(BaseRepository[Diagnostic]):

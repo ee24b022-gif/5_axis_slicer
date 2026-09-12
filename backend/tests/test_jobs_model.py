@@ -41,8 +41,8 @@ def test_job_creation(session):
         name="PocketNC V2-10",
         revision=1,
         dialect="linuxcnc",
-        contract={"axis": "5"},
-        limits={"max_speed": 100},
+        contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}},
+        limits={"ranges": {"X": (0, 300)}},
         author_id=user.id
     )
     session.add(profile)
@@ -87,7 +87,7 @@ def test_job_terminal_status_constraint(session):
     )
     profile = MachineProfile(
         name="PocketNC V2-10", revision=2, dialect="linuxcnc",
-        contract={}, limits={}, author_id=user.id
+        contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}}, limits={"ranges": {"X": (0, 300)}}, author_id=user.id
     )
     session.add_all([mesh, profile])
     session.commit()
@@ -129,7 +129,7 @@ def test_job_restrict_deletion(session):
     )
     profile = MachineProfile(
         name="PocketNC V2-10", revision=3, dialect="linuxcnc",
-        contract={}, limits={}, author_id=user.id
+        contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}}, limits={"ranges": {"X": (0, 300)}}, author_id=user.id
     )
     session.add_all([mesh, profile])
     session.commit()

@@ -86,3 +86,59 @@ def test_matrix_round_trip():
     
     # The coordinates should exactly match the original
     np.testing.assert_almost_equal(updated_mesh.vertices, original_mesh.vertices)
+
+from slice_plane_model import SlicePlane
+from enums import AngleUnit, RotationConvention
+from transform_utils import align_chunk_to_slice_plane
+
+def test_chunk_local_frame_alignment():
+    # 1. Define a 45-degree tilted plane
+    # Normal is (0.707, 0, 0.707) roughly
+    tilt = np.radians(45)
+    plane_normal = (np.sin(tilt), 0.0, np.cos(tilt))
+    plane_origin = (10.0, 0.0, 10.0)
+    local_x = (np.cos(tilt), 0.0, -np.sin(tilt))
+    local_y = (0.0, 1.0, 0.0)
+    
+    plane = SlicePlane(
+        plane_origin=plane_origin,
+        unit_normal=plane_normal,
+        angle_pair=(45.0, 0.0),
+        angle_units=AngleUnit.DEGREES,
+        rotation_convention=RotationConvention.AC_TABLE,
+        local_x=local_x,
+        local_y=local_y
+    )
+    
+    # 2. Create a box centered at the origin, and move it to the plane.
+    # The box is placed such that its bottom perfectly aligns with the plane
+    box = trimesh.creation.box(extents=(10, 10, 10))
+    # Move box so its bottom center is at (0,0,0)
+    box.apply_translation([0, 0, 5])
+    
+    # We want to place this box precisely ON the plane in world space
+    local_to_world = np.eye(4)
+    local_to_world[0:3, 0] = plane.local_x
+    local_to_world[0:3, 1] = plane.local_y
+    local_to_world[0:3, 2] = plane.unit_normal
+    local_to_world[0:3, 3] = plane.plane_origin
+    box.apply_transform(local_to_world)
+    
+    # 3. Align it
+    aligned_mesh, flat_matrix, min_z, max_z = align_chunk_to_slice_plane(box, plane)
+    
+    # 4. Assert
+    # min_z should be 0 since the base of the box is on the plane
+    assert abs(min_z) < 1e-4
+    # max_z should be 10 (the height of the box)
+    assert abs(max_z - 10.0) < 1e-4
+    
+    # 5. Reverse transformation test
+    # Apply the returned flat_matrix to the aligned mesh
+    reverse_mat = np.array(flat_matrix).reshape(4, 4)
+    aligned_mesh.apply_transform(reverse_mat)
+    
+    # The bottom center of the reversed mesh should be exactly back at plane_origin
+    # Wait, the mesh center in local was (0,0,5). In world it should be origin + 5*normal
+    expected_centroid = np.array(plane_origin) + 5.0 * np.array(plane_normal)
+    assert np.allclose(aligned_mesh.centroid, expected_centroid, atol=1e-4)

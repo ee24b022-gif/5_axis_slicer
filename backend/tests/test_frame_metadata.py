@@ -70,8 +70,8 @@ def create_dependencies(session: Session):
         name=f"Profile {uuid.uuid4()}",
         revision=1,
         dialect="Marlin",
-        contract={},
-        limits={},
+        contract={"calibration_revision": 1, "kinematic_convention": "BC_TABLE", "units": "mm", "axis_names": ["X", "Y", "Z", "B", "C"], "axis_directions": {"X": 1, "Y": 1, "Z": 1, "B": -1, "C": 1}, "zero_positions": {"X": 0.0, "Y": 0.0, "Z": 0.0, "B": 0.0, "C": 0.0}, "command_templates": {"linear_move": "G1"}},
+        limits={"ranges": {"X": (0, 300)}},
         author_id=user.id
     )
     session.add(profile)

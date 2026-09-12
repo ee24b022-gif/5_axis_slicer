@@ -178,6 +178,7 @@ class Layer(Base, TimestampMixin):
     is_planar: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_support: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     gcode_offset: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    preview_uri: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     
     job: Mapped["Job"] = relationship(back_populates="layers")
     diagnostics: Mapped[list["Diagnostic"]] = relationship(back_populates="layer", cascade="all, delete-orphan")
@@ -229,6 +230,7 @@ class Mesh(Base, TimestampMixin):
     bound_max_x: Mapped[float] = mapped_column(Float, nullable=False)
     bound_max_y: Mapped[float] = mapped_column(Float, nullable=False)
     bound_max_z: Mapped[float] = mapped_column(Float, nullable=False)
+    cleaned_up_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     
     uploader: Mapped["User"] = relationship(back_populates="meshes")
     jobs: Mapped[List["Job"]] = relationship(back_populates="mesh")
@@ -252,6 +254,24 @@ class MachineProfile(Base, TimestampMixin):
         UniqueConstraint('name', 'revision', name='uq_machine_profile_name_revision'),
     )
 
+    @validates('contract')
+    def validate_contract(self, key, value):
+        from machine_profile_model import MachineContract
+        try:
+            MachineContract(**value)
+        except Exception as e:
+            raise ValueError(f"Invalid machine contract: {e}")
+        return value
+
+    @validates('limits')
+    def validate_limits(self, key, value):
+        from machine_profile_model import MachineLimits
+        try:
+            MachineLimits(**value)
+        except Exception as e:
+            raise ValueError(f"Invalid machine limits: {e}")
+        return value
+
 class Job(Base, TimestampMixin):
     __tablename__ = 'jobs'
     
@@ -268,6 +288,7 @@ class Job(Base, TimestampMixin):
     checkpoint_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancellation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     
     creator: Mapped["User"] = relationship(back_populates="jobs")
     mesh: Mapped["Mesh"] = relationship(back_populates="jobs")
@@ -347,6 +368,7 @@ class Export(Base, TimestampMixin):
     content_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     export_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    cleaned_up_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     
     job: Mapped["Job"] = relationship(back_populates="exports")
     creator: Mapped["User"] = relationship(back_populates="exports")

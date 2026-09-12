@@ -1,30 +1,60 @@
-import argparse
-from toolpath import generate_spiral_toolpath_on_hemisphere
-from kinematics import Kinematics5Axis
-from gcode import GCodeGenerator
+from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+from dependencies import get_db
+from job_lifecycle import InvalidTransitionError
+from local_executor import LocalJobExecutor
+from contextlib import asynccontextmanager
+from routers.meshes import router as meshes_router
+from routers.jobs import router as jobs_router
+from routers.machine_profiles import router as machine_profiles_router
+from routers.auth import router as auth_router
+from routers.api_keys import router as api_keys_router
 
-def main():
-    parser = argparse.ArgumentParser(description="Open5x Conformal Slicer")
-    parser.add_argument("--radius", type=float, default=20.0, help="Radius of hemisphere")
-    parser.add_argument("--line_width", type=float, default=0.4, help="Width of extrusion line")
-    parser.add_argument("--bed_center_z", type=float, default=50.0, help="Distance from rotation center to bed surface")
-    args = parser.parse_args()
+from config import settings
 
-    print(f"Generating toolpath for hemisphere (R={args.radius})...")
-    path = generate_spiral_toolpath_on_hemisphere(args.radius, args.line_width)
-    
-    print("Initializing Kinematics and G-code Generator...")
-    kinematics = Kinematics5Axis(bed_center_z=args.bed_center_z)
-    generator = GCodeGenerator(e_multiplier=0.05, base_feedrate=1200)
-    
-    print("Processing IK and generating G-code...")
-    gcode = generator.generate(path, kinematics)
-    
-    out_file = "output.gcode"
-    with open(out_file, "w") as f:
-        f.write(gcode)
-        
-    print(f"Done! G-code saved to {out_file}")
-    
-if __name__ == "__main__":
-    main()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.app_env != "production":
+        executor = LocalJobExecutor(max_workers=settings.worker_concurrency)
+        app.state.executor = executor
+        yield
+        executor.shutdown()
+    else:
+        app.state.executor = None
+        yield
+
+app = FastAPI(
+    title="5-Axis Slicer API",
+    version="0.1.0",
+    description="Core slicing API engine",
+    lifespan=lifespan
+)
+
+app.include_router(auth_router)
+app.include_router(api_keys_router)
+app.include_router(meshes_router)
+app.include_router(jobs_router)
+app.include_router(machine_profiles_router)
+
+@app.exception_handler(InvalidTransitionError)
+async def invalid_transition_exception_handler(request: Request, exc: InvalidTransitionError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": str(exc), "code": "INVALID_TRANSITION"}
+    )
+
+@app.get("/health")
+def health_check():
+    """Liveness probe"""
+    return {"status": "healthy"}
+
+@app.get("/readiness")
+def readiness_check(db: Session = Depends(get_db)):
+    """Readiness probe testing DB connectivity"""
+    try:
+        db.execute(text("SELECT 1"))
+        return {"status": "ready"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Database unavailable: {str(e)}")

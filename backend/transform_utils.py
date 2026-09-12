@@ -72,3 +72,74 @@ def apply_canonical_transform(
     final_mat = tf.concatenate_matrices(trans_mat, sr_mat)
     
     return mesh, final_mat
+
+from slice_plane_model import SlicePlane
+
+def align_chunk_to_slice_plane(mesh: trimesh.Trimesh, plane: SlicePlane) -> Tuple[trimesh.Trimesh, list[float], float, float]:
+    """
+    Transforms a chunk from world space to a local slicing frame where:
+    - The slicing plane becomes the XY plane (Z=0).
+    - The mesh extends into +Z.
+    
+    Returns:
+        - The transformed mesh (modified in-place, but returned for convenience)
+        - The 16-element flat list representing the local_to_world 4x4 matrix (for Chunk ORM metadata)
+        - min_z (which should mathematically be near 0.0)
+        - max_z (the maximum height of the chunk)
+    """
+    # 1. Build local-to-world affine matrix
+    local_to_world = np.eye(4, dtype=np.float64)
+    local_to_world[0:3, 0] = plane.local_x
+    local_to_world[0:3, 1] = plane.local_y
+    local_to_world[0:3, 2] = plane.unit_normal
+    local_to_world[0:3, 3] = plane.plane_origin
+    
+    # 2. Invert to get world-to-local transformation
+    world_to_local = np.linalg.inv(local_to_world)
+    
+    # 3. Apply the transformation to the mesh
+    mesh.apply_transform(world_to_local)
+    
+    # 4. Compute slicing bounds
+    bounds = mesh.bounds
+    min_z = float(bounds[0][2])
+    max_z = float(bounds[1][2])
+    
+    flat_matrix = local_to_world.flatten().tolist()
+    
+    return mesh, flat_matrix, min_z, max_z
+
+from typing import List
+
+def restore_segments_to_world(segments: np.ndarray, z_height: float, transform_matrix: List[float]) -> np.ndarray:
+    """
+    Restores an (N, 2, 2) array of 2D line segments at a given z_height
+    back to its (N, 2, 3) 3D world coordinates using the chunk's 4x4 matrix.
+    """
+    if segments.size == 0:
+        return np.empty((0, 2, 3), dtype=np.float64)
+        
+    N = segments.shape[0]
+    # segments shape is (N, 2, 2)
+    
+    # 1. Expand to (N, 2, 3) by appending z_height
+    z_col = np.full((N, 2, 1), z_height, dtype=np.float64)
+    pts_3d = np.concatenate([segments, z_col], axis=-1)  # Shape (N, 2, 3)
+    
+    # 2. Reshape to (N*2, 3) for matrix multiplication
+    pts_3d_flat = pts_3d.reshape(-1, 3)
+    
+    # 3. Inflate to homogeneous coordinates (N*2, 4)
+    ones = np.ones((pts_3d_flat.shape[0], 1), dtype=np.float64)
+    pts_4d = np.concatenate([pts_3d_flat, ones], axis=-1)
+    
+    # 4. Transform
+    mat = np.array(transform_matrix, dtype=np.float64).reshape(4, 4)
+    pts_4d_transformed = (mat @ pts_4d.T).T
+    
+    # 5. Normalize and strip homogeneous
+    pts_3d_transformed = pts_4d_transformed[:, 0:3] / pts_4d_transformed[:, 3:4]
+    
+    # 6. Reshape back to (N, 2, 3)
+    return pts_3d_transformed.reshape(N, 2, 3)
+

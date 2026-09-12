@@ -656,14 +656,29 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             return {"error": f"Collision detected on {fp.feature_type} layer {fp.layer_idx}: {reports[0].limiting_surface} collision. {reports[0].suggested_remedy}"}
     
     # Use standard kinematics and gcode modules
-    from kinematics import Kinematics5Axis
-    from gcode import GCodeGenerator
+    from uv_adapter import TableTableUVAdapter
+    from rotary_gcode import RotaryGCodeGenerator
+    from dialect_model import DialectSettings, FeedLimits, RetractionSettings
+    from enums import GCodeDialect, CoordinateMode
     import tempfile
     
-    kinematics = Kinematics5Axis(bed_center_z=bed_center_z)
-    generator = GCodeGenerator(
+    settings = DialectSettings(
+        dialect=GCodeDialect.MARLIN,
+        coordinate_mode=CoordinateMode.ABSOLUTE,
+        units="mm",
+        axis_mapping={"x": "X", "y": "Y", "z": "Z", "e": "E", "u": "U", "v": "V"},
+        feed_limits=FeedLimits(travel=3000, print=1500, retract=2400),
+        retraction=RetractionSettings(distance=2.0, feedrate=2400),
+        clearance_moves=["G0 Z50 F3000"],
+        header=["; START"],
+        footer=["; END"],
+        provenance_enabled=True
+    )
+    kinematics = TableTableUVAdapter(bed_center_z=bed_center_z)
+    generator = RotaryGCodeGenerator(
+        settings,
+        kinematics,
         e_multiplier=0.05, 
-        base_feedrate=1500, 
         travel_threshold=1.5
     )
     
@@ -673,7 +688,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     path_points = [(pt[0], pt[1], pt[2], pt[3], pt[4], pt[5]) for pt in path]
     
     path_ids = [pt[8] for pt in path]
-    gcode_str = generator.generate(path_points, kinematics, path_ids)
+    gcode_str, _ = generator.generate(path_points, path_ids)
     
     # The API currently expects a file-like object for gcode_file
     gcode_file = tempfile.TemporaryFile(mode='w+')
