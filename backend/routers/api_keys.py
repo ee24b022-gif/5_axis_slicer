@@ -21,7 +21,7 @@ def create_api_key(
     
     expires_at = None
     if request.expires_in_days is not None:
-        expires_at = datetime.utcnow() + timedelta(days=request.expires_in_days)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=request.expires_in_days)
         
     db_key = APIKey(
         user_id=current_actor.user_id,

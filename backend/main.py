@@ -38,6 +38,11 @@ app.include_router(meshes_router)
 app.include_router(jobs_router)
 app.include_router(machine_profiles_router)
 
+import redis
+from logging_config import setup_logging
+
+setup_logging()
+
 @app.exception_handler(InvalidTransitionError)
 async def invalid_transition_exception_handler(request: Request, exc: InvalidTransitionError):
     return JSONResponse(
@@ -52,9 +57,16 @@ def health_check():
 
 @app.get("/readiness")
 def readiness_check(db: Session = Depends(get_db)):
-    """Readiness probe testing DB connectivity"""
+    """Readiness probe testing DB and Redis connectivity"""
     try:
+        # Check Database
         db.execute(text("SELECT 1"))
+        
+        # Check Redis
+        r = redis.Redis.from_url(settings.redis_url)
+        if not r.ping():
+            raise Exception("Redis ping failed")
+            
         return {"status": "ready"}
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Database unavailable: {str(e)}")
+        raise HTTPException(status_code=503, detail=f"Dependencies unavailable: {str(e)}")

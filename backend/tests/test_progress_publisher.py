@@ -27,9 +27,15 @@ def test_progress_publisher_success(mock_redis):
     
     publisher.publish(event)
     
-    # Verify publish was called correctly
-    assert mock_client.publish.called
-    args, kwargs = mock_client.publish.call_args
+    # Verify publish was called correctly via pipeline
+    mock_pipeline = mock_client.pipeline.return_value
+    assert mock_pipeline.execute.called
+    
+    # Verify set and publish were called on the pipeline
+    assert mock_pipeline.set.called
+    assert mock_pipeline.publish.called
+    
+    args, kwargs = mock_pipeline.publish.call_args
     assert args[0] == "job_progress:test-job-id"
     
     payload = json.loads(args[1])
@@ -73,5 +79,5 @@ def test_progress_publisher_publish_error(mock_redis):
     # Publishing should not raise an error
     publisher.publish(event)
     
-    # Verify publish was actually attempted
-    assert mock_client.publish.called
+    # Verify execute was actually attempted via pipeline
+    assert mock_client.pipeline.return_value.execute.called

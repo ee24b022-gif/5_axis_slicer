@@ -22,6 +22,8 @@ from enums import JobStage, DiagnosticSeverity, DiagnosticStatus
 from export_gate import ExportGateService
 from progress_model import StageProgressEvent
 from authorization import require_job_owner, enforce_ownership
+from release_gate import ReleaseGateService
+from preprint_checklist import PreprintChecklist, ReleaseGateResult
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 def _run_job_lifecycle(
@@ -171,6 +173,15 @@ async def get_job_events(
             
         try:
             client = redis_async.from_url(settings.redis_url)
+            
+            # Replay latest state immediately
+            latest_key = f"job_progress_latest:{job.id}"
+            latest_payload = await client.get(latest_key)
+            if latest_payload:
+                if isinstance(latest_payload, bytes):
+                    latest_payload = latest_payload.decode("utf-8")
+                yield f"data: {latest_payload}\n\n"
+            
             pubsub = client.pubsub()
             channel = f"job_progress:{job.id}"
             await pubsub.subscribe(channel)
@@ -299,3 +310,27 @@ def get_job_export(
     return Response(content=file_bytes, media_type="application/octet-stream", headers={
         "Content-Disposition": f"attachment; filename={export.id}.gcode"
     })
+
+@router.post("/{job_id}/release-gate", response_model=ReleaseGateResult)
+def evaluate_release_gate(
+    job_id: uuid.UUID,
+    checklist: PreprintChecklist,
+    db: Session = Depends(get_db),
+    current_actor: Actor = Depends(get_current_actor)
+):
+    """
+    Evaluate the release gate for a job. Requires a completed pre-print
+    physical dry-run checklist. This endpoint does NOT trigger a download —
+    the operator must separately call GET /jobs/{job_id}/export after
+    authorization.
+    """
+    job = require_job_owner(job_id, db, current_actor)
+    
+    export = db.query(Export).filter(Export.job_id == job_id).order_by(Export.created_at.desc()).first()
+    if not export:
+        raise HTTPException(status_code=404, detail="Export not found for this job")
+    
+    enforce_ownership(export, "creator_id", current_actor, "Export")
+    
+    result = ReleaseGateService.evaluate(job, export, checklist)
+    return result

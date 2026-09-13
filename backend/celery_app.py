@@ -9,6 +9,12 @@ from job_lifecycle import JobLifecycle
 from storage import get_storage_adapter
 from geometry_service import GeometryApplicationService
 from progress_publisher import RedisProgressPublisher
+from celery.signals import setup_logging
+from logging_config import setup_logging as custom_setup_logging
+
+@setup_logging.connect
+def config_loggers(*args, **kwags):
+    custom_setup_logging()
 
 celery_app = Celery(
     "slicer_worker",
@@ -23,6 +29,12 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     worker_concurrency=settings.worker_concurrency,
+    task_soft_time_limit=settings.task_soft_time_limit,
+    task_time_limit=settings.task_time_limit,
+    worker_max_memory_per_child=settings.worker_max_memory_per_child,
+    worker_max_tasks_per_child=settings.worker_max_tasks_per_child,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
     beat_schedule={
         "cleanup_expired_artifacts_daily": {
             "task": "trigger_artifact_cleanup",
@@ -31,9 +43,12 @@ celery_app.conf.update(
     }
 )
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 @celery_app.task(bind=True, name="execute_job_task")
 def execute_job_task(self, job_id: str, mesh_storage_uri: str, job_mode: str, job_settings: dict, machine_profile_dict: dict):
     db = SessionLocal()
+    job = None
     try:
         job = db.query(Job).filter(Job.id == uuid.UUID(job_id)).first()
         if not job or job.status == JobStatus.CANCELLED:
@@ -46,18 +61,12 @@ def execute_job_task(self, job_id: str, mesh_storage_uri: str, job_mode: str, jo
         mesh_bytes = storage.get_artifact(mesh_storage_uri)
         file_bytes = mesh_bytes
             
-        # Optional: In a real system, we might periodically check self.request.called_directly 
-        # or use a Redis flag for cancellation, but F-066 states cooperative cancellation is via DB
-        # JobLifecycle.cancel_job will set cancellation_requested_at.
         def is_cancelled():
-            # Refresh from db
             db.refresh(job)
             return job.cancellation_requested_at is not None
 
-        # Initialize progress publisher
         publisher = RedisProgressPublisher()
 
-        # Execute
         payload, diagnostics = GeometryApplicationService.execute(
             job_id=job_id,
             file_bytes=file_bytes,
@@ -74,6 +83,11 @@ def execute_job_task(self, job_id: str, mesh_storage_uri: str, job_mode: str, jo
             JobLifecycle.complete_job(db, job)
             
         return {"status": "success", "payload_status": payload.get("status")}
+        
+    except SoftTimeLimitExceeded:
+        if job:
+            JobLifecycle.fail_job(db, job)
+        return {"status": "failed", "reason": "Job execution timed out gracefully."}
         
     except Exception as e:
         if job:

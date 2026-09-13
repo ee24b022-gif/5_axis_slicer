@@ -125,7 +125,7 @@ class MachineProfileResponse(BaseModel):
 class APIKeyCreateRequest(BaseModel):
     description: str | None = None
     scopes: List[str] = Field(default_factory=list)
-    expires_in_days: int | None = Field(None, description="Optional number of days until the key expires")
+    expires_in_days: int | None = Field(None, ge=1, le=3650, description="Optional number of days until the key expires")
 
 class APIKeyResponse(BaseModel):
     id: uuid.UUID

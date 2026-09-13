@@ -25,8 +25,14 @@ class RedisProgressPublisher:
             
         try:
             channel = f"job_progress:{event.job_id}"
+            latest_key = f"job_progress_latest:{event.job_id}"
             payload = event.model_dump_json()
-            self.client.publish(channel, payload)
+            
+            # Use pipeline to ensure atomic publish and set
+            pipe = self.client.pipeline()
+            pipe.set(latest_key, payload, ex=86400) # expire in 1 day
+            pipe.publish(channel, payload)
+            pipe.execute()
         except redis.exceptions.RedisError as e:
             logger.warning(f"Failed to publish progress to Redis for job {event.job_id}: {e}")
         except Exception as e:

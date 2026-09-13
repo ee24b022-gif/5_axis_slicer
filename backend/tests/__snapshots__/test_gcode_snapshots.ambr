@@ -1,0 +1,54 @@
+# serializer version: 1
+# name: test_klipper_manual_stepper_ab_snapshot
+  '''
+  ; START
+  ; Profile: Klipper Manual Stepper AB
+  ; Timestamp: 2025-01-01T12:00:00+00:00
+  G21 ; Set units to millimeters
+  G90 ; Absolute positioning
+  M82 ; Absolute extrusion mode
+  G0 Z50 F3000
+  G0 X0.000 Y0.000 Z0.000 F3000
+  MANUAL_STEPPER STEPPER=stepper_u POS=0.000
+  MANUAL_STEPPER STEPPER=stepper_v POS=0.000
+  G1 E-2.000 F2400 ; Retract
+  G0 X-10.000 Y7.071 Z7.071 F3000 ; Travel
+  MANUAL_STEPPER STEPPER=stepper_u POS=45.000
+  MANUAL_STEPPER STEPPER=stepper_v POS=90.000
+  G1 E0.000 F2400 ; Unretract
+  ; END
+  '''
+# ---
+# name: test_klipper_rotary_axis_ab_snapshot
+  '''
+  ; START
+  ; Profile: Klipper Prototype AB
+  ; Timestamp: 2025-01-01T12:00:00+00:00
+  G21 ; Set units to millimeters
+  G90 ; Absolute positioning
+  M82 ; Absolute extrusion mode
+  G0 Z50 F3000
+  G0 X0.000 Y0.000 Z0.000 F3000 A0.000 B0.000
+  G1 X0.000 Y0.707 Z0.707 E0.050 F1500.0 A45.000 B90.000
+  G1 X1.000 Y0.707 Z0.707 E0.100 F1500.0 A45.000 B0.000
+  ; END
+  '''
+# ---
+# name: test_three_axis_snapshot
+  '''
+  ; START
+  ; Job ID: 12345678-1234-5678-1234-567812345678
+  ; Profile: Test Slicer
+  ; Timestamp: 2025-01-01T12:00:00+00:00
+  G21 ; Set units to millimeters
+  G90 ; Absolute positioning
+  M82 ; Absolute extrusion mode
+  G0 Z50 F3000
+  G0 X0.000 Y0.000 Z0.000 F3000
+  G1 X1.000 Y0.000 Z0.000 E0.100 F1500.0
+  G1 E-1.900 F2400 ; Retract
+  G0 X10.000 Y0.000 Z0.000 F3000 ; Travel
+  G1 E0.100 F2400 ; Unretract
+  ; END
+  '''
+# ---

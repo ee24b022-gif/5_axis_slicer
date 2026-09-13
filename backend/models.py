@@ -4,11 +4,11 @@ import numpy as np
 import uuid
 from sqlalchemy import String, Boolean, Enum as SQLAlchemyEnum
 from sqlalchemy.orm import Mapped, mapped_column
-from database import Base
+from database import Base, UTCDateTime
 from mixins import TimestampMixin, SoftDeleteMixin
 from enums import UserRole, MeshFormat, JobMode, JobStatus
 
-from sqlalchemy import ForeignKey, Float, Integer, BigInteger, String, JSON, DateTime, Boolean, UniqueConstraint, CheckConstraint
+from sqlalchemy import ForeignKey, Float, Integer, BigInteger, String, JSON, Boolean, UniqueConstraint, CheckConstraint
 from datetime import datetime
 from sqlalchemy.orm import relationship, validates
 from enums import JobStatus, JobMode, JobStage, MeshFormat, ChunkValidity, DiagnosticSeverity, DiagnosticStatus, ExportStatus
@@ -191,8 +191,8 @@ class APIKey(Base, TimestampMixin):
     key_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     prefix: Mapped[str] = mapped_column(String, nullable=False)
     scopes: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(timezone=True), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     
     user: Mapped["User"] = relationship(back_populates="api_keys")
@@ -203,8 +203,8 @@ class RefreshToken(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     token_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(timezone=True), nullable=True)
     replaced_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("refresh_tokens.id", ondelete="SET NULL"), nullable=True)
     
     user: Mapped["User"] = relationship(back_populates="refresh_tokens")
@@ -230,7 +230,7 @@ class Mesh(Base, TimestampMixin):
     bound_max_x: Mapped[float] = mapped_column(Float, nullable=False)
     bound_max_y: Mapped[float] = mapped_column(Float, nullable=False)
     bound_max_z: Mapped[float] = mapped_column(Float, nullable=False)
-    cleaned_up_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cleaned_up_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(timezone=True), nullable=True)
     
     uploader: Mapped["User"] = relationship(back_populates="meshes")
     jobs: Mapped[List["Job"]] = relationship(back_populates="mesh")
@@ -286,9 +286,9 @@ class Job(Base, TimestampMixin):
     status: Mapped[JobStatus] = mapped_column(nullable=False, default=JobStatus.PENDING)
     progress: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     checkpoint_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    cancellation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(timezone=True), nullable=True)
+    cancellation_requested_at: Mapped[datetime | None] = mapped_column(UTCDateTime(timezone=True), nullable=True)
     
     creator: Mapped["User"] = relationship(back_populates="jobs")
     mesh: Mapped["Mesh"] = relationship(back_populates="jobs")
@@ -368,7 +368,7 @@ class Export(Base, TimestampMixin):
     content_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     export_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    cleaned_up_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cleaned_up_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(timezone=True), nullable=True)
     
     job: Mapped["Job"] = relationship(back_populates="exports")
     creator: Mapped["User"] = relationship(back_populates="exports")

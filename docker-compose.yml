@@ -1,16 +1,144 @@
-version: '3.8'
+# ============================================================
+# Docker Compose Development Environment for 5-Axis Slicer
+# ============================================================
+# Usage:
+#   docker compose up --build -d      # Start all services
+#   docker compose logs -f api        # Follow API logs
+#   bash scripts/run_fixture_job.sh   # Run a fixture job
+#   docker compose down -v            # Tear down with volumes
+# ============================================================
 
 services:
+  # ---- Infrastructure ----
+
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: slicer_test
+      POSTGRES_USER: slicer_user
       POSTGRES_PASSWORD: slicer_password
-      POSTGRES_DB: slicer_test_db
+      POSTGRES_DB: slicer_db
     ports:
       - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U slicer_test -d slicer_test_db"]
+      test: ["CMD-SHELL", "pg_isready -U slicer_user -d slicer_db"]
       interval: 2s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb local/slicer-artifacts --ignore-existing;
+      mc ilm add --expire-days 30 local/slicer-artifacts;
+      echo 'Bucket slicer-artifacts created and ILM policy set.';
+      exit 0;
+      "
+
+  pgbackup:
+    image: postgres:15-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: slicer_user
+      POSTGRES_PASSWORD: slicer_password
+      POSTGRES_DB: slicer_db
+    volumes:
+      - pgbackups:/backups
+    entrypoint: >
+      /bin/sh -c "
+      echo '0 2 * * * pg_dump -h postgres -U slicer_user -d slicer_db -F c -f /backups/slicer_db_\$$(date +\\%Y\\%m\\%d).dump' > /etc/crontabs/root &&
+      crond -f -l 2
+      "
+
+  # ---- Application ----
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["api"]
+    env_file:
+      - .env.docker
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      createbuckets:
+        condition: service_completed_successfully
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["worker"]
+    env_file:
+      - .env.docker
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./frontend/src:/app/src
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+
+volumes:
+  pgdata:
+  miniodata:
+  pgbackups:

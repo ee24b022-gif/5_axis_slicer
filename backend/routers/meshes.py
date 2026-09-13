@@ -15,6 +15,7 @@ from mesh_validator import validate_mesh_envelope, MeshEnvelopeError
 from stl_parser import parse_binary_stl
 from storage import get_storage_adapter
 from schemas import MeshResponse
+from config import settings
 
 router = APIRouter(prefix="/meshes", tags=["meshes"])
 
@@ -41,7 +42,8 @@ async def upload_mesh(
         tmp_path = tmp.name
         
     try:
-        validate_mesh_envelope(tmp_path)
+        max_size = settings.upload_limit_mb * 1024 * 1024
+        validate_mesh_envelope(tmp_path, max_size_bytes=max_size)
         
         # 4. Extract Metadata
         parsed = parse_binary_stl(tmp_path)
@@ -51,6 +53,17 @@ async def upload_mesh(
         bounds_min = vertices.min(axis=0)
         bounds_max = vertices.max(axis=0)
         triangle_count = len(faces)
+        
+        if triangle_count > settings.max_triangles:
+            raise MeshEnvelopeError("TOO_MANY_TRIANGLES", f"Mesh has {triangle_count} triangles, exceeding limit of {settings.max_triangles}")
+            
+        dim_x = bounds_max[0] - bounds_min[0]
+        dim_y = bounds_max[1] - bounds_min[1]
+        dim_z = bounds_max[2] - bounds_min[2]
+        
+        if dim_x > settings.max_bounding_box_dim_mm or dim_y > settings.max_bounding_box_dim_mm or dim_z > settings.max_bounding_box_dim_mm:
+            raise MeshEnvelopeError("BOUNDING_BOX_EXCEEDED", f"Mesh physical dimensions exceed maximum allowed limit of {settings.max_bounding_box_dim_mm}mm")
+
         
     except MeshEnvelopeError as e:
         os.remove(tmp_path)

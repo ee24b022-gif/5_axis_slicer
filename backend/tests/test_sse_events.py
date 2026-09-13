@@ -101,6 +101,8 @@ def test_sse_events_active_state(mock_from_url, mock_job):
     # Mock Redis client and pubsub
     mock_client = MagicMock()
     mock_client.aclose = AsyncMock()
+    mock_client.get = AsyncMock(return_value=b'{"stage":"initialization","progress":0.1}')
+    
     mock_pubsub = AsyncMock()
     mock_from_url.return_value = mock_client
     mock_client.pubsub.return_value = mock_pubsub
@@ -117,7 +119,10 @@ def test_sse_events_active_state(mock_from_url, mock_job):
         assert response.status_code == 200
         content = response.read().decode("utf-8")
         
-        # Two data payloads should have been yielded
+        # The replayed payload should be yielded first
+        assert '"progress":0.1' in content
+        
+        # Two data payloads should have been yielded from pub/sub
         assert '"progress":0.5' in content
         assert '"progress":0.6' in content
         

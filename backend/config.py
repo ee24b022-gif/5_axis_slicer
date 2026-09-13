@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     worker_concurrency: int = Field(default=4)
     artifact_retention_days: int = Field(default=7)
     upload_limit_mb: int = Field(default=50)
+    max_triangles: int = Field(default=1_000_000)
+    max_bounding_box_dim_mm: float = Field(default=1000.0)
+    task_soft_time_limit: int = Field(default=3600)
+    task_time_limit: int = Field(default=3660)
+    worker_max_memory_per_child: int = Field(default=2000000)
+    worker_max_tasks_per_child: int = Field(default=50)
+    
     auth_mode: str = Field(default="local")
     secret_key: str = Field(default="09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7")
     access_token_expire_minutes: int = Field(default=15)
