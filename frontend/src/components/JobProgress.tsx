@@ -75,6 +75,7 @@ export function JobProgress({ jobId, onRestart }: JobProgressProps) {
         marginBottom: '20px'
       }}>
         {diagLoading && !diagnostics && <div>Polling diagnostics...</div>}
+        {diagnostics?.length === 0 && <div style={{ color: '#888' }}>[INFO] No diagnostics reported. Job processed successfully.</div>}
         {diagnostics?.map((diag) => {
           let color = '#ccc';
           if (diag.severity === 'error' || diag.severity === 'critical') color = '#f44336';

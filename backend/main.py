@@ -25,12 +25,43 @@ async def lifespan(app: FastAPI):
         app.state.executor = None
         yield
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(
     title="5-Axis Slicer API",
     version="0.1.0",
     description="Core slicing API engine",
     lifespan=lifespan
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+from dependencies import get_current_actor, Actor
+from models import User
+import uuid
+
+def mock_get_current_actor():
+    return Actor(
+        actor_type="USER",
+        user_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+        key_id=None,
+        scopes=[],
+        user=User(
+            id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+            username="dev",
+            email="dev@slicer.local",
+            is_active=True
+        )
+    )
+
+if settings.app_env != "production":
+    app.dependency_overrides[get_current_actor] = mock_get_current_actor
 
 app.include_router(auth_router)
 app.include_router(api_keys_router)
