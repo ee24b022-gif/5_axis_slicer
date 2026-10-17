@@ -217,6 +217,41 @@ class CollisionEngine:
         collisions[query_idx] = distances < holder_radius
         return collisions
 
+    def batch_check_poses_with_bvh(
+        self,
+        points: np.ndarray,
+        normals: np.ndarray,
+        printed_bvh: MeshBVH,
+    ) -> np.ndarray:
+        """Batch check poses against a custom printed-material BVH.
+
+        No current_z filtering is applied; the caller is responsible for
+        ensuring printed_bvh represents exactly the material that is already
+        printed at the time of the check. Returns a bool array (True = collision).
+        """
+        points = np.asarray(points, dtype=float)
+        normals = np.asarray(normals, dtype=float)
+        if points.ndim != 2 or points.shape[1] != 3:
+            raise ValueError(
+                f"batch_check_poses_with_bvh: points must have shape (N, 3), got {points.shape}"
+            )
+        if normals.shape != points.shape:
+            raise ValueError(
+                f"batch_check_poses_with_bvh: normals must match points shape {points.shape}, "
+                f"got {normals.shape}"
+            )
+        count = points.shape[0]
+        collisions = np.zeros(count, dtype=bool)
+        if count == 0:
+            return collisions
+
+        holder_ends = points + normals * self.profile.nozzle_length
+        holder_radius = self.profile.nozzle_holder_radius
+
+        distances = printed_bvh.query_distance(holder_ends)
+        collisions = distances < holder_radius
+        return collisions
+
     def query_closest_point(
         self,
         point: np.ndarray,

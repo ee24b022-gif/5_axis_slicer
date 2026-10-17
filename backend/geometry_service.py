@@ -169,13 +169,8 @@ class GeometryApplicationService:
                     chunks_data = []
                 
                 if "error" in result:
-                    diagnostics.append(ValidationDiagnostic(
-                        stage=JobStage.SECTIONING,
-                        severity=DiagnosticSeverity.ERROR,
-                        status=DiagnosticStatus.FAIL,
-                        code="S-001",
-                        message=result["error"]
-                    ))
+                    # S-001 FAIL diagnostic already appended by _execute_chunk_path
+                    # (extended into diagnostics via chunk_diagnostics above).
                     emit(JobStage.SECTIONING, 1.0)
                     return {"toolpath_job": result}, diagnostics
                 
@@ -310,7 +305,7 @@ class GeometryApplicationService:
                 },
                 "transform_matrix": matrix,
                 "layer_idx_min": global_layer_idx,
-                "layer_idx_max": global_layer_idx,  # placeholder, updated at end
+                "layer_idx_max": global_layer_idx,  # updated after the layer loop
                 "min_z": float(min_z),
                 "max_z": float(max_z),
                 "triangle_count": len(local_mesh.faces),
@@ -357,22 +352,16 @@ class GeometryApplicationService:
                 
                 if all_paths:
                     ordered = order_paths((0.0, 0.0), all_paths)
-                    
+
                     holder_radius = profile.nozzle_holder_radius
                     max_spacing = holder_radius / 2.0
-                    
-                    # Local-space nozzle normal is (0,0,1). World-space normal is
-                    # the plane's unit_normal (for aligned chunks this maps correctly).
-                    local_normal = np.array([0.0, 0.0, 1.0])
-                    world_normal = np.array(plane.unit_normal, dtype=float)
-                    
+
                     # Build local-to-world 4x4 matrix from the chunk transform.
                     mat = np.array(matrix, dtype=float).reshape(4, 4)
-                    
+
                     # --- Resample every shell AND infill path at spacing <= holder_radius/2 ---
-                    sample_pts_local = []
-                    sample_norms_local = []
-                    
+                    sampled = []  # list of (pts_local (N,3), n_samples)
+
                     for path in ordered:
                         coords = np.array(path.coords)
                         if len(coords) < 2:
@@ -389,29 +378,73 @@ class GeometryApplicationService:
                         ys = np.interp(sample_d, cum_lengths, coords[:, 1])
                         zs = np.full(n_samples, z, dtype=float)
                         pts_local = np.column_stack([xs, ys, zs])
-                        sample_pts_local.append(pts_local)
-                        sample_norms_local.append(np.tile(local_normal, (n_samples, 1)))
-                    
-                    # --- Batch collision check in world space ---
-                    if sample_pts_local:
-                        all_pts_local = np.vstack(sample_pts_local)
-                        all_norms_local = np.vstack(sample_norms_local)
-                        
-                        # Transform local points to world: world = local_to_world @ local
-                        pts_hom = np.column_stack([all_pts_local, np.ones(len(all_pts_local))])
+                        sampled.append((pts_local, n_samples))
+
+                    if sampled:
+                        all_pts_local = np.vstack([s[0] for s in sampled])
+                        # Local-space nozzle normal is (0, 0, 1).
+                        all_norms_local = np.tile(
+                            np.array([0.0, 0.0, 1.0]), (len(all_pts_local), 1)
+                        )
+
+                        # Transform local points to world (w=1 homogeneous).
+                        pts_hom = np.column_stack(
+                            [all_pts_local, np.ones(len(all_pts_local))]
+                        )
                         pts_world_hom = (mat @ pts_hom.T).T
                         pts_world = pts_world_hom[:, :3] / pts_world_hom[:, 3:4]
-                        
-                        # Transform normals (rotation only, no translation)
-                        norms_hom = np.column_stack([all_norms_local, np.zeros(len(all_norms_local))])
+
+                        # Transform normals to world (w=0, rotation only), then normalize.
+                        norms_hom = np.column_stack(
+                            [all_norms_local, np.zeros(len(all_norms_local))]
+                        )
                         norms_world_hom = (mat @ norms_hom.T).T
                         norms_world = norms_world_hom[:, :3]
-                        norms_world = norms_world / np.linalg.norm(norms_world, axis=1, keepdims=True)
-                        
-                        # One batched distance query for the whole layer
-                        collisions = collision_engine.batch_check_poses(
-                            pts_world, norms_world, current_z=z
+                        norms_world = norms_world / np.linalg.norm(
+                            norms_world, axis=1, keepdims=True
                         )
+
+                        # --- Collision check against printed material ---
+                        if chunk_idx == 0:
+                            # Horizontal plane: local == world for the base chunk.
+                            collisions = collision_engine.batch_check_poses(
+                                pts_world, norms_world, current_z=z
+                            )
+                        else:
+                            # Combined printed-material BVH from earlier chunks +
+                            # current chunk clipped below this layer.
+                            combined_v = []
+                            combined_f = []
+                            face_offset = 0
+                            for _, prev_mesh in valid_chunks[:chunk_idx]:
+                                combined_v.append(prev_mesh.vertices)
+                                combined_f.append(prev_mesh.faces + face_offset)
+                                face_offset += len(prev_mesh.vertices)
+                            below = local_mesh.slice_plane(
+                                plane_origin=[0.0, 0.0, z],
+                                plane_normal=[0.0, 0.0, -1.0],
+                            )
+                            if below is not None and len(below.faces) > 0:
+                                below_v = np.asarray(below.vertices, dtype=float)
+                                below_hom = np.column_stack(
+                                    [below_v, np.ones(len(below_v))]
+                                )
+                                below_world_hom = (mat @ below_hom.T).T
+                                below_world = below_world_hom[:, :3] / below_world_hom[:, 3:4]
+                                combined_v.append(below_world)
+                                combined_f.append(below.faces + face_offset)
+                                face_offset += len(below_v)
+                            if combined_v:
+                                printed_bvh = MeshBVH(
+                                    vertices=np.vstack(combined_v),
+                                    faces=np.vstack(combined_f),
+                                )
+                                collisions = collision_engine.batch_check_poses_with_bvh(
+                                    pts_world, norms_world, printed_bvh
+                                )
+                            else:
+                                collisions = np.zeros(len(pts_world), dtype=bool)
+
                         if bool(np.any(collisions)):
                             collision_message = (
                                 f"Collision detected on layer {global_layer_idx}: "
@@ -425,19 +458,24 @@ class GeometryApplicationService:
                                 message=collision_message
                             ))
                             return {"error": collision_message}, diagnostics, [], []
-                    
-                    # --- Collect all path points for G-code ---
-                    for path in ordered:
-                        coords = list(path.coords)
-                        for px, py in coords:
-                            all_path_points.append((float(px), float(py), float(z), 0.0, 0.0, 1.0, global_layer_idx, "perimeter", path_id_counter))
-                        path_id_counter += 1
+
+                        # --- Append world-frame sampled path points ---
+                        cursor = 0
+                        for (pts_local, n_samples) in sampled:
+                            for i in range(n_samples):
+                                wx, wy, wz = pts_world[cursor + i]
+                                nx, ny, nz = norms_world[cursor + i]
+                                all_path_points.append((
+                                    float(wx), float(wy), float(wz),
+                                    float(nx), float(ny), float(nz),
+                                    global_layer_idx, "perimeter", path_id_counter
+                                ))
+                            cursor += n_samples
+                            path_id_counter += 1
                 
                 global_layer_idx += 1
-        
-        # Update last chunk's layer_idx_max
-        if chunks_data:
-            chunks_data[-1]["layer_idx_max"] = global_layer_idx - 1
+
+        chunks_data[-1]["layer_idx_max"] = global_layer_idx - 1
         
         # --- Generate G-code ---
         if all_path_points:
