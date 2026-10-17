@@ -1,5 +1,6 @@
 import uuid
 import os
+import hashlib
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -11,7 +12,7 @@ from schemas import JobCreateRequest, JobResponse, DiagnosticResponse, PreviewRe
 from models import Job, User, Diagnostic, Layer, Chunk, Export
 from repositories import MeshRepository, BaseRepository
 from models import MachineProfile
-from enums import JobStatus, JobStage, DiagnosticSeverity, ExportStatus
+from enums import JobStatus, JobStage, DiagnosticSeverity, ExportStatus, ChunkValidity
 from job_lifecycle import JobLifecycle
 from storage import get_storage_adapter
 from config import settings
@@ -38,6 +39,9 @@ def _run_job_lifecycle(
     Runs in a FastAPI background thread.
     Manages DB lifecycle states and waits for LocalJobExecutor future.
     """
+    from models import Diagnostic
+    from validation_model import ValidationResult
+    
     db = SessionLocal()
     try:
         job = db.query(Job).filter(Job.id == job_id).first()
@@ -64,10 +68,85 @@ def _run_job_lifecycle(
         try:
             payload, diagnostics = future.result()
             
+            # Persist all diagnostics to the database
+            for d in diagnostics:
+                db.add(Diagnostic(
+                    job_id=job_id,
+                    stage=d.stage,
+                    severity=d.severity,
+                    status=d.status,
+                    code=d.code,
+                    message=d.message,
+                    details=d.details if d.details else None,
+                ))
+            db.commit()
+            
             if payload.get("status") == "cancelled":
                 JobLifecycle.cancel_job(db, job)
             else:
-                JobLifecycle.complete_job(db, job)
+                # Check for blocking diagnostics or an error in the payload
+                val_result = ValidationResult(diagnostics=diagnostics)
+                toolpath = payload.get("toolpath_job", {})
+                has_error = val_result.is_blocking or "error" in toolpath
+                if has_error:
+                    JobLifecycle.fail_job(db, job)
+                else:
+                    JobLifecycle.complete_job(db, job)
+
+                    # --- Persist chunks and layers from the slicing payload ---
+                    toolpath = payload.get("toolpath_job", {})
+                    layers_data = toolpath.get("_layers_data", [])
+                    chunks_data = toolpath.get("_chunks_data", [])
+
+                    # Persist Chunks
+                    for c in chunks_data:
+                        db.add(Chunk(
+                            job_id=job_id,
+                            chunk_idx=c["chunk_idx"],
+                            source_plane=c["source_plane"],
+                            transform_matrix=c["transform_matrix"],
+                            layer_idx_min=c["layer_idx_min"],
+                            layer_idx_max=c["layer_idx_max"],
+                            min_z=c["min_z"],
+                            max_z=c["max_z"],
+                            validity=ChunkValidity.VALID,
+                            last_completed_layer=c["layer_idx_max"],
+                            triangle_count=c.get("triangle_count", 0),
+                            storage_key=c.get("storage_key", f"chunk_{c['chunk_idx']}")
+                        ))
+
+                    # Persist Layers
+                    for l in layers_data:
+                        db.add(Layer(
+                            job_id=job_id,
+                            layer_idx=l["layer_idx"],
+                            z_height=l["z_height"],
+                            thickness=l["thickness"],
+                            is_support=l.get("is_support", False)
+                        ))
+
+                    db.commit()
+
+                    # --- Create Export from gcode output ---
+                    toolpath = payload.get("toolpath_job", {})
+                    gcode_str = toolpath.get("gcode_string", "")
+                    if gcode_str and job.status == JobStatus.COMPLETE:
+                        storage = get_storage_adapter()
+                        content = gcode_str.encode("utf-8")
+                        content_hash = hashlib.sha256(content).hexdigest()
+                        storage_uri = storage.save_artifact("exports", content, content_hash)
+
+                        db.add(Export(
+                            job_id=job_id,
+                            creator_id=job.creator_id,
+                            dialect=job.machine_profile.dialect,
+                            status=ExportStatus.READY,
+                            storage_uri=storage_uri,
+                            content_hash=content_hash,
+                            size_bytes=len(content),
+                            export_metadata={"status": "ready", "safety_label": "PRODUCTION - VERIFIED"}
+                        ))
+                        db.commit()
                 
         except Exception as e:
             JobLifecycle.fail_job(db, job)

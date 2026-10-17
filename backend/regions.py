@@ -12,9 +12,19 @@ class AreaLogic:
         Takes raw 3D segments (where Z is constant) and builds closed 2D polygons.
         Returns a list of valid Shapely Polygons representing the layer boundary.
         """
+        # Snap float endpoints to 1e-4mm precision so linemerge/polygonize rings close,
+        # and drop zero-length segments.
+        snapped_segments = []
+        for s in segments:
+            p0 = (round(s[0][0], 4), round(s[0][1], 4))
+            p1 = (round(s[1][0], 4), round(s[1][1], 4))
+            if p0 == p1:
+                continue
+            snapped_segments.append((p0, p1))
+
         # Convert to 2D lines
-        lines = [LineString([(s[0][0], s[0][1]), (s[1][0], s[1][1])]) for s in segments]
-        
+        lines = [LineString([p0, p1]) for p0, p1 in snapped_segments]
+
         # Merge connected lines
         merged = linemerge(lines)
         

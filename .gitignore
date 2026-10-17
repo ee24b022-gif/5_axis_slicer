@@ -16,3 +16,5 @@ output.gcode
 *.stl
 *.json
 backend/test_output.txt
+
+backend/graphify-out/

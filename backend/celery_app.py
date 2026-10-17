@@ -77,10 +77,32 @@ def execute_job_task(self, job_id: str, mesh_storage_uri: str, job_mode: str, jo
             is_cancelled=is_cancelled
         )
         
+        # Persist all diagnostics to the database
+        from models import Diagnostic as DiagnosticModel
+        from validation_model import ValidationResult
+        for d in diagnostics:
+            db.add(DiagnosticModel(
+                job_id=uuid.UUID(job_id),
+                stage=d.stage,
+                severity=d.severity,
+                status=d.status,
+                code=d.code,
+                message=d.message,
+                details=d.details if d.details else None,
+            ))
+        db.commit()
+        
         if payload.get("status") == "cancelled":
             JobLifecycle.cancel_job(db, job)
         else:
-            JobLifecycle.complete_job(db, job)
+            # Check for blocking diagnostics or an error in the payload
+            val_result = ValidationResult(diagnostics=diagnostics)
+            toolpath = payload.get("toolpath_job", {})
+            has_error = val_result.is_blocking or "error" in toolpath
+            if has_error:
+                JobLifecycle.fail_job(db, job)
+            else:
+                JobLifecycle.complete_job(db, job)
             
         return {"status": "success", "payload_status": payload.get("status")}
         
