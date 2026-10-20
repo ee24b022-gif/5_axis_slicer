@@ -1,14 +1,29 @@
 import numpy as np
 import trimesh
+import manifold3d
 from typing import List, Optional, Dict, Tuple
-from shapely.geometry import LineString
-from shapely.ops import polygonize, unary_union
-from shapely.ops import triangulate as shapely_triangulate
 from models import SlicerMachineProfile, MachinePose, CollisionReport, FeaturePath
 from bvh import MeshBVH
 
 # Small tolerance applied when deciding whether a vertex sits at the clip plane.
 _CLIP_TOLERANCE = 1e-6
+
+
+def _trimesh_to_manifold(vertices: np.ndarray, faces: np.ndarray) -> manifold3d.Manifold:
+    """Convert vertex/face arrays to a manifold3d Manifold."""
+    m_mesh = manifold3d.Mesh(
+        np.ascontiguousarray(vertices, dtype=np.float32),
+        np.ascontiguousarray(faces, dtype=np.uint32),
+    )
+    return manifold3d.Manifold(m_mesh)
+
+
+def _manifold_to_trimesh_arrays(m: manifold3d.Manifold) -> Tuple[np.ndarray, np.ndarray]:
+    """Convert a manifold3d Manifold to (vertices, faces) numpy arrays."""
+    mesh_out = m.to_mesh()
+    verts = np.asarray(mesh_out.vert_properties, dtype=np.float64)
+    faces = np.asarray(mesh_out.tri_verts, dtype=np.int64)
+    return verts, faces
 
 
 class CollisionEngine:
@@ -34,72 +49,23 @@ class CollisionEngine:
     def _clip_mesh_at_z(self, vertices: np.ndarray, faces: np.ndarray, z_plane: float) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """Clip mesh at z=z_plane, keeping portion below, with a cap face.
 
+        Uses manifold3d trim_by_plane for a watertight, volume-conserving clip.
+
         Returns (clipped_vertices, clipped_faces) or None if nothing below z_plane.
         """
-        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-        below = mesh.slice_plane(
-            plane_origin=[0.0, 0.0, z_plane],
-            plane_normal=[0.0, 0.0, -1.0],
-        )
-        if below is None or len(below.faces) == 0:
+        m = _trimesh_to_manifold(vertices, faces)
+        if m.is_empty():
             return None
 
-        v = np.asarray(below.vertices, dtype=float)
-        f = np.asarray(below.faces, dtype=int)
+        # Keep the portion below z_plane: normal=(0,0,-1), offset=-z_plane
+        # keeps points where (0,0,-1)·X > -z_plane  =>  z < z_plane
+        below_m = m.trim_by_plane((0.0, 0.0, -1.0), -z_plane)
+        if below_m.is_empty():
+            return None
 
-        # Count face adjacency per unique edge to find boundary edges.
-        edge_face_count: Dict[Tuple[int, int], int] = {}
-        for face in f:
-            for i in range(3):
-                e0, e1 = int(face[i]), int(face[(i + 1) % 3])
-                key = (min(e0, e1), max(e0, e1))
-                edge_face_count[key] = edge_face_count.get(key, 0) + 1
-
-        # Boundary edges at z_plane: one adjacent face, both vertices on the plane.
-        boundary_edges: List[Tuple[int, int]] = []
-        for (e0, e1), count in edge_face_count.items():
-            if count == 1:
-                if (np.isclose(v[e0, 2], z_plane, atol=_CLIP_TOLERANCE) and
-                    np.isclose(v[e1, 2], z_plane, atol=_CLIP_TOLERANCE)):
-                    boundary_edges.append((e0, e1))
-
-        v_new = v.copy()
-        f_new = f.copy()
-
-        if boundary_edges:
-            lines = [LineString([v[e0][:2], v[e1][:2]]) for e0, e1 in boundary_edges]
-            merged = unary_union(lines)
-            cap_polys = list(polygonize(merged))
-
-            new_verts: List[List[float]] = []
-            new_faces: List[List[int]] = []
-
-            for poly in cap_polys:
-                if poly.area < 1e-12:
-                    continue
-                tris = shapely_triangulate(poly)
-                for tri in tris:
-                    coords = np.array(tri.exterior.coords[:-1])  # (3, 2)
-                    tri_indices: List[int] = []
-                    for coord in coords:
-                        match = np.where(
-                            np.isclose(v_new[:, 0], coord[0], atol=_CLIP_TOLERANCE) &
-                            np.isclose(v_new[:, 1], coord[1], atol=_CLIP_TOLERANCE) &
-                            np.isclose(v_new[:, 2], z_plane, atol=_CLIP_TOLERANCE)
-                        )[0]
-                        if len(match) > 0:
-                            tri_indices.append(int(match[0]))
-                        else:
-                            new_idx = len(v_new) + len(new_verts)
-                            new_verts.append([float(coord[0]), float(coord[1]), float(z_plane)])
-                            tri_indices.append(new_idx)
-                    if len(tri_indices) == 3:
-                        new_faces.append(tri_indices)
-
-            if new_verts:
-                v_new = np.vstack([v_new, np.array(new_verts, dtype=float)])
-            if new_faces:
-                f_new = np.vstack([f_new, np.array(new_faces, dtype=int)])
+        v_new, f_new = _manifold_to_trimesh_arrays(below_m)
+        if len(f_new) == 0:
+            return None
 
         return v_new, f_new
 
