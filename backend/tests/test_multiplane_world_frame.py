@@ -82,6 +82,8 @@ from slice_intersection import slice_mesh_at_z
 from polygonization import reconstruct_polygons
 from collision import CollisionEngine
 from bvh import MeshBVH
+from slice_plane_model import SlicePlane
+from transform_utils import align_chunk_to_slice_plane
 
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 PIPE_STL = os.path.join(FIXTURE_DIR, "pipe_fitting.stl")
@@ -849,6 +851,92 @@ def test_f_printed_model_includes_earlier_chunks_and_tilted_clip():
         f"(chunk 0 spans the pipe below plane 1) are not part of the "
         f"printed material ({len(printed_v)} vertices, z range "
         f"[{printed_v[:, 2].min():.2f}, {printed_v[:, 2].max():.2f}])."
+    )
+
+
+# ---------------------------------------------------------------------------
+# (l) Tilted-chunk pose rejection: current chunk's already-printed wall
+#     must be included in collision checks for chunks >= 1.
+# ---------------------------------------------------------------------------
+
+def test_l_tilted_chunk_pose_rejection():
+    """A nozzle pose whose holder end hits the current chunk's already-printed
+    wall must be rejected as a collision. This verifies that chunks >= 1 check
+    against the current chunk's already-printed part (not just earlier chunks).
+    """
+    aligned = _aligned_pipe_mesh()
+
+    from chunk_builder import build_capped_chunks, subtract_later_chunks
+    from slice_plane_model import SlicePlane
+
+    planes = [SlicePlane(**PLANE1), SlicePlane(**PLANE2)]
+    chunks = build_capped_chunks(aligned, planes)
+    chunks, _ = subtract_later_chunks("test-l", chunks)
+
+    assert len(chunks) == 3, f"Expected 3 chunks, got {len(chunks)}"
+    assert chunks[2] is not None, "Chunk 2 (tilted) must exist"
+
+    # Align chunk 2 to PLANE2
+    local_mesh, matrix, min_z, max_z = align_chunk_to_slice_plane(
+        chunks[2].copy(), SlicePlane(**PLANE2)
+    )
+
+    # Pick a layer in the middle of chunk 2's range
+    layer_height = 2.0
+    schedule = generate_layer_schedule(min_z, max_z, layer_height)
+    assert len(schedule) > 0, "Chunk 2 must have layers"
+    z = schedule[len(schedule) // 2]
+
+    # Clip chunk 2 below this layer using manifold3d (capped clip)
+    from collision import _trimesh_to_manifold, _manifold_to_trimesh_arrays
+
+    m = _trimesh_to_manifold(local_mesh.vertices, local_mesh.faces)
+    clip_below = m.trim_by_plane((0.0, 0.0, -1.0), -z)
+    assert not clip_below.is_empty(), "Clip below layer must not be empty"
+
+    clip_v, clip_f = _manifold_to_trimesh_arrays(clip_below)
+    assert len(clip_f) > 0, "Clip must have faces"
+
+    # Map clipped vertices to world frame
+    mat = np.array(matrix, dtype=float).reshape(4, 4)
+    clip_hom = np.column_stack([clip_v, np.ones(len(clip_v))])
+    clip_world_hom = (mat @ clip_hom.T).T
+    clip_world_v = clip_world_hom[:, :3] / clip_world_hom[:, 3:4]
+
+    # Build BVH from clipped part (current chunk's already-printed material)
+    clip_bvh = MeshBVH(vertices=clip_world_v, faces=clip_f)
+
+    # Build a pose from the mesh: take a surface vertex, point nozzle at it
+    surface_pt = clip_world_v[len(clip_world_v) // 2]
+
+    # Local Z axis mapped to world = outward normal of the slice plane
+    outward = (mat @ np.array([0.0, 0.0, 1.0, 0.0]))[:3]
+    outward = outward / np.linalg.norm(outward)
+
+    # Nozzle points down at the surface (normal = -outward)
+    normal = -outward
+
+    # Tip is nozzle_length above the surface; holder_end lands on the surface
+    tip = surface_pt - normal * NOZZLE_LENGTH
+
+    # Tip must be above bed (no bed collision)
+    assert tip[2] > 0, f"Tip z={tip[2]:.3f} must be above bed_z={BED_CENTER_Z}"
+
+    # Check collision against the current chunk's clipped part
+    profile = SlicerMachineProfile(
+        nozzle_length=NOZZLE_LENGTH,
+        nozzle_holder_radius=NOZZLE_HOLDER_RADIUS,
+    )
+    engine = CollisionEngine(profile, clip_bvh, bed_center_z=BED_CENTER_Z)
+
+    points = tip.reshape(1, 3)
+    normals_arr = normal.reshape(1, 3)
+    collisions = engine.batch_check_poses_with_bvh(points, normals_arr, clip_bvh)
+
+    assert collisions[0], (
+        f"Expected collision when holder end hits current chunk's "
+        f"already-printed wall at local z={z:.3f}. Holder end should be "
+        f"on the surface (distance 0 < holder_radius={NOZZLE_HOLDER_RADIUS})."
     )
 
 

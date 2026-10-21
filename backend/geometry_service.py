@@ -376,12 +376,16 @@ class GeometryApplicationService:
                 
                 shells, infill_areas = area_logic.generate_shells_and_infill_area(boundaries, num_shells=2)
 
-                # Collision paths: only the inset shells (what is actually printed)
+                # Collision paths: shells + infill (what is actually printed)
+                infill_poly = polygons
+                infill_lines = generate_line_infill(infill_poly, spacing=2.0, angle_degrees=45.0)
                 collision_paths = []
                 for shell in shells:
                     collision_paths.append(LineString(shell.exterior.coords))
                     for interior in shell.interiors:
                         collision_paths.append(LineString(interior.coords))
+                for line in infill_lines:
+                    collision_paths.append(line)
 
                 # G-code paths: original section boundaries (world-frame fidelity)
                 section_polygons = (
@@ -394,9 +398,6 @@ class GeometryApplicationService:
                     gcode_paths.append(LineString(polygon.exterior.coords))
                     for interior in polygon.interiors:
                         gcode_paths.append(LineString(interior.coords))
-
-                infill_poly = polygons
-                infill_lines = generate_line_infill(infill_poly, spacing=2.0, angle_degrees=45.0)
 
                 # All paths for G-code output: section boundaries + infill
                 all_paths = gcode_paths + infill_lines
@@ -482,34 +483,53 @@ class GeometryApplicationService:
                             collisions = collision_engine.batch_check_poses_with_bvh(
                                 pts_world, norms_world, cached_bvh
                             )
-                        # Also check current chunk's already-printed part (clip below this layer)
-                        below = local_mesh.slice_plane(
-                            plane_origin=[0.0, 0.0, z],
-                            plane_normal=[0.0, 0.0, -1.0],
+                        # Also check current chunk's already-printed part (clip below this layer).
+                        # Use manifold3d trim_by_plane for a capped clip, map to world,
+                        # build a BVH, and check via batch_check_poses_with_bvh.
+                        clip_result = collision_engine._clip_mesh_at_z(
+                            local_mesh.vertices, local_mesh.faces, z
                         )
-                        if below is not None and len(below.faces) > 0 and not np.all(collisions):
-                            below_v = np.asarray(below.vertices, dtype=float)
-                            below_f = np.asarray(below.faces, dtype=int)
-                            below_hom = np.column_stack(
-                                [below_v, np.ones(len(below_v))]
+                        if clip_result is not None and not np.all(collisions):
+                            clip_v, clip_f = clip_result
+                            clip_hom = np.column_stack(
+                                [clip_v, np.ones(len(clip_v))]
                             )
-                            below_world_hom = (mat @ below_hom.T).T
-                            below_world_v = below_world_hom[:, :3] / below_world_hom[:, 3:4]
-                            below_world_mesh = trimesh.Trimesh(
-                                vertices=below_world_v,
-                                faces=below_f,
-                                process=False,
+                            clip_world_hom = (mat @ clip_hom.T).T
+                            clip_world_v = (
+                                clip_world_hom[:, :3] / clip_world_hom[:, 3:4]
                             )
-                            remaining = holder_ends[~collisions]
-                            if len(remaining) > 0:
-                                remaining = remaining.reshape(-1, 3)
-                                _, dist_clip, _ = trimesh.proximity.closest_point(
-                                    below_world_mesh, remaining
+                            # Build BVH from current chunk's clipped part
+                            clip_bvh = MeshBVH(
+                                vertices=clip_world_v, faces=clip_f
+                            )
+                            # Combine with earlier chunks BVH if available
+                            if cached_bvh is not None:
+                                cached_mesh = cached_bvh.get_mesh()
+                                combined_v = np.vstack(
+                                    [cached_mesh.vertices, clip_world_v]
                                 )
-                                dist_clip = np.atleast_1d(dist_clip)
-                                new_collisions = dist_clip < profile.nozzle_holder_radius
-                                collision_idx = np.nonzero(~collisions)[0]
-                                collisions[collision_idx[new_collisions]] = True
+                                combined_f = np.vstack(
+                                    [
+                                        cached_mesh.faces,
+                                        clip_f + len(cached_mesh.vertices),
+                                    ]
+                                )
+                                combined_bvh = MeshBVH(
+                                    vertices=combined_v, faces=combined_f
+                                )
+                            else:
+                                combined_bvh = clip_bvh
+                            # Check remaining points against combined BVH
+                            remaining_idx = np.nonzero(~collisions)[0]
+                            if len(remaining_idx) > 0:
+                                new_collisions = (
+                                    collision_engine.batch_check_poses_with_bvh(
+                                        pts_world[remaining_idx],
+                                        norms_world[remaining_idx],
+                                        combined_bvh,
+                                    )
+                                )
+                                collisions[remaining_idx[new_collisions]] = True
 
                     if bool(np.any(collisions)):
                         collision_message = (
