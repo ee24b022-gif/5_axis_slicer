@@ -863,7 +863,17 @@ def test_l_tilted_chunk_pose_rejection():
     """A nozzle pose whose holder end hits the current chunk's already-printed
     wall must be rejected as a collision. This verifies that chunks >= 1 check
     against the current chunk's already-printed part (not just earlier chunks).
+
+    The test:
+    1. Builds the printed-material BVH for earlier chunks (chunks 0 & 1).
+    2. Clips the current chunk (chunk 2) at a mid-layer to get its
+       already-printed part.
+    3. Picks a clip vertex far from earlier chunks (distance > 2*holder_radius).
+    4. Places the holder end within holder_radius of that vertex.
+    5. Calls _check_chunk_ge_1_collision and asserts collision is detected.
     """
+    from geometry_service import _check_chunk_ge_1_collision
+
     aligned = _aligned_pipe_mesh()
 
     from chunk_builder import build_capped_chunks, subtract_later_chunks
@@ -876,7 +886,7 @@ def test_l_tilted_chunk_pose_rejection():
     assert len(chunks) == 3, f"Expected 3 chunks, got {len(chunks)}"
     assert chunks[2] is not None, "Chunk 2 (tilted) must exist"
 
-    # Align chunk 2 to PLANE2
+    # Align chunk 2 (the current chunk) to PLANE2
     local_mesh, matrix, min_z, max_z = align_chunk_to_slice_plane(
         chunks[2].copy(), SlicePlane(**PLANE2)
     )
@@ -887,7 +897,21 @@ def test_l_tilted_chunk_pose_rejection():
     assert len(schedule) > 0, "Chunk 2 must have layers"
     z = schedule[len(schedule) // 2]
 
-    # Clip chunk 2 below this layer using manifold3d (capped clip)
+    # --- Build earlier-chunks BVH (chunks 0 & 1 in world frame) ---
+    earlier_chunks = [chunks[0], chunks[1]]
+    combined_v = []
+    combined_f = []
+    face_offset = 0
+    for prev_mesh in earlier_chunks:
+        combined_v.append(prev_mesh.vertices)
+        combined_f.append(prev_mesh.faces + face_offset)
+        face_offset += len(prev_mesh.vertices)
+    if combined_v:
+        earlier_bvh = MeshBVH(vertices=np.vstack(combined_v), faces=np.vstack(combined_f))
+    else:
+        earlier_bvh = None
+
+    # --- Clip current chunk below this layer (already-printed part) ---
     from collision import _trimesh_to_manifold, _manifold_to_trimesh_arrays
 
     m = _trimesh_to_manifold(local_mesh.vertices, local_mesh.faces)
@@ -903,40 +927,89 @@ def test_l_tilted_chunk_pose_rejection():
     clip_world_hom = (mat @ clip_hom.T).T
     clip_world_v = clip_world_hom[:, :3] / clip_world_hom[:, 3:4]
 
-    # Build BVH from clipped part (current chunk's already-printed material)
-    clip_bvh = MeshBVH(vertices=clip_world_v, faces=clip_f)
+    # --- Pick a clip vertex far from earlier chunks (> 2*holder_radius) ---
+    # Query distances from clip vertices to earlier chunks BVH
+    if earlier_bvh is not None:
+        # Use a simple nearest-point query: find min distance from each clip vertex
+        # to the earlier chunks mesh.
+        earlier_mesh = earlier_bvh.get_mesh()
+        # Compute distances from clip_world_v to earlier_mesh vertices (approximate)
+        # For exact distance we'd use trimesh.proximity, but vertex-to-vertex
+        # is a conservative upper bound. We just need ONE vertex that's far.
+        # Let's compute min distance from each clip vertex to any earlier vertex.
+        min_dists = np.full(len(clip_world_v), np.inf)
+        for ev in earlier_mesh.vertices:
+            d = np.linalg.norm(clip_world_v - ev, axis=1)
+            min_dists = np.minimum(min_dists, d)
+    else:
+        min_dists = np.full(len(clip_world_v), np.inf)
 
-    # Build a pose from the mesh: take a surface vertex, point nozzle at it
-    surface_pt = clip_world_v[len(clip_world_v) // 2]
+    holder_radius = NOZZLE_HOLDER_RADIUS
+    # Find vertices with distance > 2 * holder_radius
+    far_mask = min_dists > (2 * holder_radius)
+    assert np.any(far_mask), (
+        f"No clip vertex found with distance to earlier chunks > "
+        f"{2 * holder_radius:.2f} mm (max min_dist = {min_dists.max():.2f}). "
+        f"Test setup needs a different layer or geometry."
+    )
+    # Pick the first far vertex
+    far_idx = int(np.nonzero(far_mask)[0][0])
+    far_vertex = clip_world_v[far_idx]
 
+    # --- Build a nozzle pose with holder end within holder_radius of far_vertex ---
     # Local Z axis mapped to world = outward normal of the slice plane
     outward = (mat @ np.array([0.0, 0.0, 1.0, 0.0]))[:3]
     outward = outward / np.linalg.norm(outward)
-
-    # Nozzle points down at the surface (normal = -outward)
+    # Nozzle points toward the surface (normal = -outward)
     normal = -outward
-
-    # Tip is nozzle_length above the surface; holder_end lands on the surface
-    tip = surface_pt - normal * NOZZLE_LENGTH
+    # Place tip so holder_end = far_vertex + offset (offset < holder_radius along normal)
+    # holder_end = tip + normal * nozzle_length
+    # We want ||holder_end - far_vertex|| < holder_radius
+    # So: tip = far_vertex - normal * nozzle_length + normal * (holder_radius / 2)
+    # Then holder_end = far_vertex + normal * (holder_radius / 2)
+    offset = holder_radius / 2.0
+    tip = far_vertex - normal * NOZZLE_LENGTH + normal * offset
 
     # Tip must be above bed (no bed collision)
     assert tip[2] > 0, f"Tip z={tip[2]:.3f} must be above bed_z={BED_CENTER_Z}"
 
-    # Check collision against the current chunk's clipped part
+    # Verify holder_end is within holder_radius of far_vertex
+    holder_end = tip + normal * NOZZLE_LENGTH
+    dist_to_far = np.linalg.norm(holder_end - far_vertex)
+    assert dist_to_far < holder_radius, (
+        f"Holder end distance to far_vertex = {dist_to_far:.3f}, "
+        f"expected < {holder_radius:.3f}"
+    )
+
+    # --- Call the helper and assert collision is detected ---
     profile = SlicerMachineProfile(
         nozzle_length=NOZZLE_LENGTH,
-        nozzle_holder_radius=NOZZLE_HOLDER_RADIUS,
+        nozzle_holder_radius=holder_radius,
     )
-    engine = CollisionEngine(profile, clip_bvh, bed_center_z=BED_CENTER_Z)
+    # Full-mesh BVH for the collision engine (used for bed collision check)
+    part_bvh = MeshBVH(aligned.vertices, aligned.faces)
+    engine = CollisionEngine(profile, part_bvh, bed_center_z=BED_CENTER_Z)
 
     points = tip.reshape(1, 3)
     normals_arr = normal.reshape(1, 3)
-    collisions = engine.batch_check_poses_with_bvh(points, normals_arr, clip_bvh)
+
+    # Call the helper directly
+    collisions = _check_chunk_ge_1_collision(
+        collision_engine=engine,
+        pts_world=points,
+        norms_world=normals_arr,
+        local_mesh=local_mesh,
+        mat=mat,
+        z=z,
+        profile=profile,
+        cached_bvh=earlier_bvh,
+    )
 
     assert collisions[0], (
-        f"Expected collision when holder end hits current chunk's "
-        f"already-printed wall at local z={z:.3f}. Holder end should be "
-        f"on the surface (distance 0 < holder_radius={NOZZLE_HOLDER_RADIUS})."
+        f"Expected collision when holder end is within {holder_radius:.1f} mm "
+        f"of current chunk's already-printed wall at local z={z:.3f}. "
+        f"Holder end distance to clip vertex = {dist_to_far:.3f} mm. "
+        f"This verifies the current-chunk clip is included in the collision check."
     )
 
 
