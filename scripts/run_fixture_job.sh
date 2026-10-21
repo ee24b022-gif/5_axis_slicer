@@ -11,6 +11,7 @@
 # ============================================================
 
 set -e
+cd "$(dirname "$0")/.."
 
 API_BASE="${API_BASE:-http://localhost:8000}"
 MAX_WAIT=60
@@ -35,14 +36,12 @@ echo "  ✓ API is healthy."
 echo ""
 
 # Step 1: Register a test user
-echo "[2/6] Registering test user..."
-REGISTER_RESP=$(curl -sf -X POST "${API_BASE}/auth/register" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "fixture_user",
-    "email": "fixture@example.com",
-    "password": "fixture_password_123"
-  }' 2>/dev/null || true)
+echo "[2/6] Ensuring test user exists..."
+H=$(docker compose exec -T api python -c "from auth_service import get_password_hash as g; print(g('fixture_password_123'))" | tr -d '\r\n')
+docker compose exec -T postgres psql -U slicer_user -d slicer_db -q -c \
+  "INSERT INTO users (id, username, email, hashed_password, role, is_active, created_at, updated_at, is_deleted)
+   VALUES (gen_random_uuid(),'fixture_user','fixture@example.com','$H','USER',true,now(),now(),false)
+   ON CONFLICT (username) DO NOTHING;"
 
 # Login to get access token
 echo "[3/6] Logging in..."

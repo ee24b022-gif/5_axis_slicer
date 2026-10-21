@@ -60,7 +60,7 @@ def mock_get_current_actor():
         )
     )
 
-if settings.app_env != "production":
+if settings.app_env == "development":
     app.dependency_overrides[get_current_actor] = mock_get_current_actor
 
 app.include_router(auth_router)
