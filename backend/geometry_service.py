@@ -34,6 +34,71 @@ class JobCancelledError(Exception):
     """Raised when a job is cooperatively cancelled during execution."""
     pass
 
+
+def _check_chunk_ge_1_collision(
+    collision_engine: CollisionEngine,
+    pts_world: np.ndarray,
+    norms_world: np.ndarray,
+    local_mesh: trimesh.Trimesh,
+    mat: np.ndarray,
+    z: float,
+    profile: SlicerMachineProfile,
+    cached_bvh: MeshBVH | None,
+) -> np.ndarray:
+    """Check collision for chunk index >= 1 against printed material.
+
+    Printed material = all earlier chunks (cached BVH, world frame) UNION
+    the current chunk's already-printed part (clip by current layer, mapped
+    to world frame). Returns a bool array of per-point collision flags.
+    """
+    holder_ends = pts_world + norms_world * profile.nozzle_length
+    collisions = np.zeros(len(pts_world), dtype=bool)
+
+    # Check against earlier chunks (cached BVH in world frame)
+    if cached_bvh is not None:
+        collisions = collision_engine.batch_check_poses_with_bvh(
+            pts_world, norms_world, cached_bvh
+        )
+
+    # Also check current chunk's already-printed part (clip below this layer).
+    # Uses manifold3d trim_by_plane for a capped clip, mapped to world frame,
+    # then checked via batch_check_poses_with_bvh.
+    clip_result = collision_engine._clip_mesh_at_z(
+        local_mesh.vertices, local_mesh.faces, z
+    )
+    if clip_result is not None and not np.all(collisions):
+        clip_v, clip_f = clip_result
+        clip_hom = np.column_stack([clip_v, np.ones(len(clip_v))])
+        clip_world_hom = (mat @ clip_hom.T).T
+        clip_world_v = clip_world_hom[:, :3] / clip_world_hom[:, 3:4]
+
+        # Build BVH from current chunk's clipped part
+        clip_bvh = MeshBVH(vertices=clip_world_v, faces=clip_f)
+
+        # Combine with earlier chunks BVH if available
+        if cached_bvh is not None:
+            cached_mesh = cached_bvh.get_mesh()
+            combined_v = np.vstack([cached_mesh.vertices, clip_world_v])
+            combined_f = np.vstack(
+                [cached_mesh.faces, clip_f + len(cached_mesh.vertices)]
+            )
+            combined_bvh = MeshBVH(vertices=combined_v, faces=combined_f)
+        else:
+            combined_bvh = clip_bvh
+
+        # Check remaining points against combined BVH
+        remaining_idx = np.nonzero(~collisions)[0]
+        if len(remaining_idx) > 0:
+            new_collisions = collision_engine.batch_check_poses_with_bvh(
+                pts_world[remaining_idx],
+                norms_world[remaining_idx],
+                combined_bvh,
+            )
+            collisions[remaining_idx[new_collisions]] = True
+
+    return collisions
+
+
 class GeometryApplicationService:
     @staticmethod
     def execute(
