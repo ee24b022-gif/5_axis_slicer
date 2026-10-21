@@ -1,20 +1,7 @@
-# ============================================================
-# Docker Compose Development Environment for 5-Axis Slicer
-# ============================================================
-# Usage:
-#   docker compose up --build -d      # Start all services
-#   docker compose logs -f api        # Follow API logs
-#   bash scripts/run_fixture_job.sh   # Run a fixture job
-#   docker compose down -v            # Tear down with volumes
-#
-# Note: This stack uses in-process job execution (APP_ENV=development).
-# For Celery-based async processing, set APP_ENV=production in .env.docker,
-# uncomment the redis and worker services below, and run migrations.
-# ============================================================
-
+# Dev stack: Postgres + API (in-process jobs, APP_ENV=development) + frontend.
+# Artifacts are stored on a local volume (MinIO images were withdrawn from Docker Hub in Sept 2026).
+# For Celery: set APP_ENV=production in .env.docker and add redis + worker services.
 services:
-  # ---- Infrastructure ----
-
   postgres:
     image: postgres:15-alpine
     environment:
@@ -31,56 +18,6 @@ services:
       timeout: 5s
       retries: 10
 
-  minio:
-    image: minio/minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - miniodata:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  createbuckets:
-    image: minio/mc
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin;
-      mc mb local/slicer-artifacts --ignore-existing;
-      mc ilm add --expire-days 30 local/slicer-artifacts;
-      echo 'Bucket slicer-artifacts created and ILM policy set.';
-      exit 0;
-      "
-
-  pgbackup:
-    image: postgres:15-alpine
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      POSTGRES_USER: slicer_user
-      POSTGRES_PASSWORD: slicer_password
-      POSTGRES_DB: slicer_db
-    volumes:
-      - pgbackups:/backups
-    entrypoint: >
-      /bin/sh -c "
-      echo '0 2 * * * pg_dump -h postgres -U slicer_user -d slicer_db -F c -f /backups/slicer_db_\$(date +\%Y\%m\%d).dump' > /etc/crontabs/root &&
-      crond -f -l 2
-      "
-
-  # ---- Application ----
-
   api:
     build:
       context: ./backend
@@ -93,10 +30,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      createbuckets:
-        condition: service_completed_successfully
     volumes:
       - ./backend:/app
+      - artifacts:/data/artifacts
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 5s
@@ -119,5 +55,4 @@ services:
 
 volumes:
   pgdata:
-  miniodata:
-  pgbackups:
+  artifacts:
