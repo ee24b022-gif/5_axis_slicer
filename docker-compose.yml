@@ -6,6 +6,10 @@
 #   docker compose logs -f api        # Follow API logs
 #   bash scripts/run_fixture_job.sh   # Run a fixture job
 #   docker compose down -v            # Tear down with volumes
+#
+# Note: This stack uses in-process job execution (APP_ENV=development).
+# For Celery-based async processing, set APP_ENV=production in .env.docker,
+# uncomment the redis and worker services below, and run migrations.
 # ============================================================
 
 services:
@@ -23,16 +27,6 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U slicer_user -d slicer_db"]
-      interval: 2s
-      timeout: 5s
-      retries: 10
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       timeout: 5s
       retries: 10
@@ -81,7 +75,7 @@ services:
       - pgbackups:/backups
     entrypoint: >
       /bin/sh -c "
-      echo '0 2 * * * pg_dump -h postgres -U slicer_user -d slicer_db -F c -f /backups/slicer_db_\$$(date +\\%Y\\%m\\%d).dump' > /etc/crontabs/root &&
+      echo '0 2 * * * pg_dump -h postgres -U slicer_user -d slicer_db -F c -f /backups/slicer_db_\$(date +\%Y\%m\%d).dump' > /etc/crontabs/root &&
       crond -f -l 2
       "
 
@@ -99,8 +93,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       createbuckets:
         condition: service_completed_successfully
     volumes:
@@ -110,19 +102,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 15
-
-  worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    command: ["worker"]
-    env_file:
-      - .env.docker
-    depends_on:
-      api:
-        condition: service_healthy
-    volumes:
-      - ./backend:/app
 
   frontend:
     build:

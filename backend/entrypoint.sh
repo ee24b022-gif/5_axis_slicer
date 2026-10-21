@@ -27,18 +27,19 @@ echo "[entrypoint] Running Alembic migrations..."
 alembic upgrade head
 echo "[entrypoint] Migrations complete."
 
-# Seed machine profiles
+# Seed machine profiles (idempotent)
 echo "[entrypoint] Seeding machine profiles..."
 python -c "
 from database import engine, Base, SessionLocal
-from machine_profile_seed import seed_profiles
+from machine_profile_seed import seed_fractal_profile
 Base.metadata.create_all(bind=engine)
 db = SessionLocal()
 try:
-    seed_profiles(db)
+    seed_fractal_profile()
 finally:
     db.close()
-" 2>/dev/null || echo "[entrypoint] Profile seeding skipped (may already exist)."
+"
+echo "[entrypoint] Profile seeding complete."
 
 # Dispatch based on the CMD argument
 case "${1}" in

@@ -18,3 +18,5 @@ output.gcode
 backend/test_output.txt
 
 backend/graphify-out/
+
+*.stats

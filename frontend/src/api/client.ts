@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // The base URL can be defined through environment variables, typically handled by Vite using import.meta.env
 // For development it's often convenient to point to the local backend proxy.
-const baseURL = import.meta.env.VITE_API_URL || '/api';
+const baseURL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 if (import.meta.env.DEV && !localStorage.getItem('access_token')) {
   localStorage.setItem('access_token', 'DEV_MOCK_ACCESS_TOKEN');

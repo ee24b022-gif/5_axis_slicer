@@ -11,6 +11,7 @@ trimesh ground truth, bypassing the HTTP API:
 """
 import io
 import math
+import os
 
 import numpy as np
 import trimesh
@@ -29,7 +30,8 @@ from geometry_service import GeometryApplicationService
 from models import SlicerMachineProfile
 from slice_plane_model import SlicePlane
 
-PIPE_FITTING_STL = "tests/fixtures/pipe_fitting.stl"
+FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+PIPE_FITTING_STL = os.path.join(FIXTURE_DIR, "pipe_fitting.stl")
 
 # Bore heights where the pipe fitting has internal features.
 BORE_HEIGHTS = (1.0, 10.0, 40.0, 80.0)
