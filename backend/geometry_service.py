@@ -35,11 +35,6 @@ class JobCancelledError(Exception):
     pass
 
 
-# Module-level cache for clipped current-chunk BVH per (chunk_id, z)
-# Key: (id(local_mesh), z) -> clip_bvh
-_clip_bvh_cache: dict = {}
-
-
 def _check_chunk_ge_1_collision(
     collision_engine: CollisionEngine,
     pts_world: np.ndarray,
@@ -60,7 +55,7 @@ def _check_chunk_ge_1_collision(
     collisions = np.zeros(len(pts_world), dtype=bool)
     holder_radius = profile.nozzle_holder_radius
 
-    # --- Step c: bbox early-out for earlier chunks ---
+    # --- Bbox early-out for earlier chunks ---
     # If holder_end is far from earlier chunks' bbox, skip the query.
     if cached_bvh is not None:
         earlier_mesh = cached_bvh.get_mesh()
@@ -90,15 +85,10 @@ def _check_chunk_ge_1_collision(
         clip_world_hom = (mat @ clip_hom.T).T
         clip_world_v = clip_world_hom[:, :3] / clip_world_hom[:, 3:4]
 
-        # --- Step b: cache the clipped current-chunk BVH per layer ---
-        cache_key = (id(local_mesh), z)
-        if cache_key in _clip_bvh_cache:
-            clip_bvh = _clip_bvh_cache[cache_key]
-        else:
-            clip_bvh = MeshBVH(vertices=clip_world_v, faces=clip_f)
-            _clip_bvh_cache[cache_key] = clip_bvh
+        # Build BVH from current chunk's clipped part
+        clip_bvh = MeshBVH(vertices=clip_world_v, faces=clip_f)
 
-        # --- Step c: bbox early-out for clip BVH ---
+        # --- Bbox early-out for clip BVH ---
         clip_mesh = clip_bvh.get_mesh()
         clip_bbox_min = clip_mesh.bounds[0]
         clip_bbox_max = clip_mesh.bounds[1]
@@ -375,10 +365,6 @@ class GeometryApplicationService:
         all_path_points = []  # (x, y, z, nx, ny, nz, layer_idx, feature_type, path_id)
         path_id_counter = 0
         global_layer_idx = 0
-        
-        # Clear the clip BVH cache at the start of each job
-        global _clip_bvh_cache
-        _clip_bvh_cache.clear()
         
         # Cache for the combined printed-material BVH of all earlier chunks,
         # built once per chunk position (not per layer).
