@@ -35,6 +35,11 @@ class JobCancelledError(Exception):
     pass
 
 
+# Module-level cache for clipped current-chunk BVH per (chunk_id, z)
+# Key: (id(local_mesh), z) -> clip_bvh
+_clip_bvh_cache: dict = {}
+
+
 def _check_chunk_ge_1_collision(
     collision_engine: CollisionEngine,
     pts_world: np.ndarray,
@@ -53,12 +58,25 @@ def _check_chunk_ge_1_collision(
     """
     holder_ends = pts_world + norms_world * profile.nozzle_length
     collisions = np.zeros(len(pts_world), dtype=bool)
+    holder_radius = profile.nozzle_holder_radius
 
-    # Check against earlier chunks (cached BVH in world frame)
+    # --- Step c: bbox early-out for earlier chunks ---
+    # If holder_end is far from earlier chunks' bbox, skip the query.
     if cached_bvh is not None:
-        collisions = collision_engine.batch_check_poses_with_bvh(
-            pts_world, norms_world, cached_bvh
-        )
+        earlier_mesh = cached_bvh.get_mesh()
+        earlier_bbox_min = earlier_mesh.bounds[0]
+        earlier_bbox_max = earlier_mesh.bounds[1]
+        # Expand bbox by holder_radius for conservative check
+        expanded_min = earlier_bbox_min - holder_radius
+        expanded_max = earlier_bbox_max + holder_radius
+        # Check which holder_ends are outside the expanded bbox
+        outside_bbox = np.any(holder_ends < expanded_min, axis=1) | np.any(holder_ends > expanded_max, axis=1)
+        inside_idx = np.nonzero(~outside_bbox)[0]
+        if len(inside_idx) > 0:
+            collisions[inside_idx] = collision_engine.batch_check_poses_with_bvh(
+                pts_world[inside_idx], norms_world[inside_idx], cached_bvh
+            )
+        # Points outside bbox remain False (no collision with earlier chunks)
 
     # Also check current chunk's already-printed part (clip below this layer).
     # Uses manifold3d trim_by_plane for a capped clip, mapped to world frame,
@@ -72,29 +90,36 @@ def _check_chunk_ge_1_collision(
         clip_world_hom = (mat @ clip_hom.T).T
         clip_world_v = clip_world_hom[:, :3] / clip_world_hom[:, 3:4]
 
-        # Build BVH from current chunk's clipped part
-        clip_bvh = MeshBVH(vertices=clip_world_v, faces=clip_f)
-
-        # Combine with earlier chunks BVH if available
-        if cached_bvh is not None:
-            cached_mesh = cached_bvh.get_mesh()
-            combined_v = np.vstack([cached_mesh.vertices, clip_world_v])
-            combined_f = np.vstack(
-                [cached_mesh.faces, clip_f + len(cached_mesh.vertices)]
-            )
-            combined_bvh = MeshBVH(vertices=combined_v, faces=combined_f)
+        # --- Step b: cache the clipped current-chunk BVH per layer ---
+        cache_key = (id(local_mesh), z)
+        if cache_key in _clip_bvh_cache:
+            clip_bvh = _clip_bvh_cache[cache_key]
         else:
-            combined_bvh = clip_bvh
+            clip_bvh = MeshBVH(vertices=clip_world_v, faces=clip_f)
+            _clip_bvh_cache[cache_key] = clip_bvh
 
-        # Check remaining points against combined BVH
+        # --- Step c: bbox early-out for clip BVH ---
+        clip_mesh = clip_bvh.get_mesh()
+        clip_bbox_min = clip_mesh.bounds[0]
+        clip_bbox_max = clip_mesh.bounds[1]
+        expanded_min = clip_bbox_min - holder_radius
+        expanded_max = clip_bbox_max + holder_radius
+        outside_bbox = np.any(holder_ends < expanded_min, axis=1) | np.any(holder_ends > expanded_max, axis=1)
+        inside_idx = np.nonzero(~outside_bbox)[0]
+        
+        # Only check points that: (1) not already colliding with earlier chunks, (2) inside clip bbox
         remaining_idx = np.nonzero(~collisions)[0]
         if len(remaining_idx) > 0:
-            new_collisions = collision_engine.batch_check_poses_with_bvh(
-                pts_world[remaining_idx],
-                norms_world[remaining_idx],
-                combined_bvh,
-            )
-            collisions[remaining_idx[new_collisions]] = True
+            # Intersect with inside_idx
+            mask = np.isin(remaining_idx, inside_idx)
+            final_idx = remaining_idx[mask]
+            if len(final_idx) > 0:
+                new_collisions = collision_engine.batch_check_poses_with_bvh(
+                    pts_world[final_idx],
+                    norms_world[final_idx],
+                    clip_bvh,
+                )
+                collisions[final_idx[new_collisions]] = True
 
     return collisions
 
@@ -350,6 +375,10 @@ class GeometryApplicationService:
         all_path_points = []  # (x, y, z, nx, ny, nz, layer_idx, feature_type, path_id)
         path_id_counter = 0
         global_layer_idx = 0
+        
+        # Clear the clip BVH cache at the start of each job
+        global _clip_bvh_cache
+        _clip_bvh_cache.clear()
         
         # Cache for the combined printed-material BVH of all earlier chunks,
         # built once per chunk position (not per layer).
