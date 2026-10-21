@@ -91,8 +91,6 @@ def _run_job_lifecycle(
                 if has_error:
                     JobLifecycle.fail_job(db, job)
                 else:
-                    JobLifecycle.complete_job(db, job)
-
                     # --- Persist chunks and layers from the slicing payload ---
                     toolpath = payload.get("toolpath_job", {})
                     layers_data = toolpath.get("_layers_data", [])
@@ -125,12 +123,9 @@ def _run_job_lifecycle(
                             is_support=l.get("is_support", False)
                         ))
 
-                    db.commit()
-
                     # --- Create Export from gcode output ---
-                    toolpath = payload.get("toolpath_job", {})
                     gcode_str = toolpath.get("gcode_string", "")
-                    if gcode_str and job.status == JobStatus.COMPLETE:
+                    if gcode_str:
                         storage = get_storage_adapter()
                         content = gcode_str.encode("utf-8")
                         content_hash = hashlib.sha256(content).hexdigest()
@@ -146,7 +141,9 @@ def _run_job_lifecycle(
                             size_bytes=len(content),
                             export_metadata={"status": "ready", "safety_label": "PRODUCTION - VERIFIED"}
                         ))
-                        db.commit()
+
+                    db.commit()
+                    JobLifecycle.complete_job(db, job)
                 
         except Exception as e:
             JobLifecycle.fail_job(db, job)

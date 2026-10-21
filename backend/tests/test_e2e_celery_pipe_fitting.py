@@ -49,6 +49,7 @@ def test_celery_eager_pipe_fitting_reports_collision(mock_get_storage, db, pipe_
     mock_storage = MagicMock()
     mock_storage.get_artifact.return_value = stl_bytes
     mock_get_storage.return_value = mock_storage
+    mock_storage.save_artifact.return_value = "file:///tmp/test-export"
 
     result = execute_job_task(
         str(job.id),

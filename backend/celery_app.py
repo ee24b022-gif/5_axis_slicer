@@ -102,6 +102,57 @@ def execute_job_task(self, job_id: str, mesh_storage_uri: str, job_mode: str, jo
             if has_error:
                 JobLifecycle.fail_job(db, job)
             else:
+                import hashlib
+                from models import Chunk, Layer, Export
+                from enums import ChunkValidity, ExportStatus
+
+                layers_data = toolpath.get("_layers_data", [])
+                chunks_data = toolpath.get("_chunks_data", [])
+                job_uuid = uuid.UUID(job_id)
+
+                for c in chunks_data:
+                    db.add(Chunk(
+                        job_id=job_uuid,
+                        chunk_idx=c["chunk_idx"],
+                        source_plane=c["source_plane"],
+                        transform_matrix=c["transform_matrix"],
+                        layer_idx_min=c["layer_idx_min"],
+                        layer_idx_max=c["layer_idx_max"],
+                        min_z=c["min_z"],
+                        max_z=c["max_z"],
+                        validity=ChunkValidity.VALID,
+                        last_completed_layer=c["layer_idx_max"],
+                        triangle_count=c.get("triangle_count", 0),
+                        storage_key=c.get("storage_key", f"chunk_{c['chunk_idx']}")
+                    ))
+
+                for l in layers_data:
+                    db.add(Layer(
+                        job_id=job_uuid,
+                        layer_idx=l["layer_idx"],
+                        z_height=l["z_height"],
+                        thickness=l["thickness"],
+                        is_support=l.get("is_support", False)
+                    ))
+
+                gcode_str = toolpath.get("gcode_string", "")
+                if gcode_str:
+                    content = gcode_str.encode("utf-8")
+                    content_hash = hashlib.sha256(content).hexdigest()
+                    storage_uri = storage.save_artifact("exports", content, content_hash)
+
+                    db.add(Export(
+                        job_id=job_uuid,
+                        creator_id=job.creator_id,
+                        dialect=job.machine_profile.dialect,
+                        status=ExportStatus.READY,
+                        storage_uri=storage_uri,
+                        content_hash=content_hash,
+                        size_bytes=len(content),
+                        export_metadata={"status": "ready", "safety_label": "PRODUCTION - VERIFIED"}
+                    ))
+
+                db.commit()
                 JobLifecycle.complete_job(db, job)
             
         return {"status": "success", "payload_status": payload.get("status")}

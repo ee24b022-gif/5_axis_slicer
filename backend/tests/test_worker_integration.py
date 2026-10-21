@@ -90,6 +90,7 @@ def test_celery_execution_direct(mock_get_storage, mock_job, test_db):
     mock_storage = MagicMock()
     mock_storage.get_artifact.return_value = create_valid_mesh_bytes()
     mock_get_storage.return_value = mock_storage
+    mock_storage.save_artifact.return_value = "file:///tmp/test-export"
     
     # Execute Celery task directly (simulating eagerly)
     result = execute_job_task(
@@ -111,6 +112,7 @@ def test_duplicate_delivery_idempotency(mock_get_storage, mock_job, test_db):
     mock_storage = MagicMock()
     mock_storage.get_artifact.return_value = create_valid_mesh_bytes()
     mock_get_storage.return_value = mock_storage
+    mock_storage.save_artifact.return_value = "file:///tmp/test-export"
     
     # Execute first time
     execute_job_task(str(mock_job.id), "s3://test", "three_axis", {"layer_height": 0.2, "bed_center_z": 0.0}, {})
@@ -132,6 +134,7 @@ def test_retries_and_progress_recovery(mock_get_storage, mock_job, test_db):
     mock_storage = MagicMock()
     mock_storage.get_artifact.return_value = create_valid_mesh_bytes()
     mock_get_storage.return_value = mock_storage
+    mock_storage.save_artifact.return_value = "file:///tmp/test-export"
     
     call_count = {"count": 0}
     original_execute = GeometryApplicationService.execute

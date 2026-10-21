@@ -30,3 +30,17 @@ If you prefer not to use the Makefile:
 
 ## License
 This project is licensed under the MIT License.
+
+## Environment modes (`APP_ENV`)
+
+| Value | Auth | Job execution |
+|-------|------|---------------|
+| unset / `local` (default) | real JWT auth | in-process background thread |
+| `development` | **bypassed** (fake `dev` user, for quick local UI work only) | in-process |
+| `docker` | real JWT auth | in-process |
+| `production` | real JWT auth | Celery + Redis; config validators require non-default secrets and remote storage |
+
+Notes:
+- `POST /jobs` returns 201 immediately; poll `GET /jobs/{id}` for status.
+- There is no `/auth/register` route. Create users in the database (see `scripts/run_fixture_job.sh`).
+- The Docker stack (`docker compose up --build -d`) runs Postgres, the API and the frontend, with artifacts on a local volume.
