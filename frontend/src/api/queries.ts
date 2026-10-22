@@ -18,11 +18,20 @@ export const queryKeys = {
 };
 
 // API Functions
-async function fetchMachineProfiles(): Promise<MachineProfileResponse[]> {
+export async function fetchMachineProfiles(): Promise<MachineProfileResponse[]> {
   const { data } = await apiClient.get('/machine-profiles');
-  if (Array.isArray(data)) return data;
-  if (data && Array.isArray(data.items)) return data.items;
-  return [];
+  // Non-2xx responses already reject via axios. Never degrade malformed
+  // payloads (HTML error pages, non-JSON bodies, unexpected shapes) into an
+  // empty profile list - surface the failure instead.
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (data && typeof data === 'object' && Array.isArray((data as any).items)) {
+    return (data as any).items;
+  }
+  throw new Error(
+    'Failed to load machine profiles: the backend returned an unexpected response (expected a JSON array of profiles).'
+  );
 }
 
 async function fetchJob(jobId: string): Promise<JobResponse> {

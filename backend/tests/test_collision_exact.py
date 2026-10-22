@@ -5,7 +5,7 @@ from shapely.geometry import LineString
 from shapely.ops import polygonize, unary_union
 from shapely.ops import triangulate as shapely_triangulate
 
-from collision import CollisionEngine
+from collision import CollisionEngine, CollisionStatus
 from bvh import MeshBVH
 from models import SlicerMachineProfile
 
@@ -58,18 +58,19 @@ def test_reference_pose_accepted():
     holder_end = (50, 50, 41.4); distance to wall bottom (z=38.42) = 2.98 mm
     (< 5 mm radius, would collide with the old heuristic).  But nothing is
     printed at z <= 1.4, so the printed BVH is empty and validate_pose returns
-    None.
+    a safe CollisionResult.
     """
     # Box occupies z in [38.42, 100]; nothing printed at current_z = 1.4.
     vertices, faces = make_box(0, 0, 38.42, 100, 100, 100)
     engine = make_engine(vertices, faces)
 
     result = engine.validate_pose(50.0, 50.0, 1.4, 0.0, 0.0, 1.0, current_z=1.4)
-    assert result is None
+    assert result.valid is True
+    assert result.status == CollisionStatus.SAFE
 
 
 def test_tilted_nozzle_holder_inside_wall():
-    """Test (b): Tilted nozzle — holder inside radius of printed wall → "part".
+    """Test (b): Tilted nozzle — holder inside radius of printed wall → PART_COLLISION.
 
     Wall box at x in [-1, 1], z in [0, 50] (printed portion).
     nozzle_length = 3.0 (short enough for holder to reach the wall).
@@ -86,7 +87,9 @@ def test_tilted_nozzle_holder_inside_wall():
     result = engine.validate_pose(
         3.0, 0.0, 50.0, -0.9, 0.0, 0.436, current_z=50.0
     )
-    assert result == "part"
+    assert result.valid is False
+    assert result.status == CollisionStatus.PART_COLLISION
+    assert result.limiting_surface == "part"
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +222,7 @@ def test_random_poses_agree_with_independent_reference():
 
     Because every sample lies on the real printed surface, the reference can
     never hallucinate a collision: zero false negatives
-    (validate_pose=None but reference=collision) is required.
+    (validate_pose=collision but reference=None) is required.
 
     The reference can miss narrow features between samples, so false positives
     (validate_pose=collision but reference=None) are possible; they are printed
@@ -293,7 +296,7 @@ def test_random_poses_agree_with_independent_reference():
                 vertices, faces, holder_end, holder_radius, current_z, cache
             )
 
-            engine_collide = result is not None
+            engine_collide = not result.valid
             ref_collide = expected is not None
 
             if ref_collide and not engine_collide:
@@ -335,10 +338,10 @@ def test_box_side_face_collision():
     holder_radius=5.0.
 
     Vertical:  tip=(7, 0, 45), normal=(0, 0, 1)  ->  holder_end=(7, 0, 48).
-    Distance to the side wall at x=5 is 2.0 mm < 5 mm -> "part".
+    Distance to the side wall at x=5 is 2.0 mm < 5 mm -> PART_COLLISION.
 
     Tilted:    tip=(7, 0, 45), normal=(-0.9, 0, 0.436)
-    ->  holder_end≈(4.3, 0, 46.3), still beside the side wall -> "part".
+    ->  holder_end≈(4.3, 0, 46.3), still beside the side wall -> PART_COLLISION.
     """
     vertices, faces = make_box(-5.0, -5.0, 0.0, 5.0, 5.0, 100.0)
     engine = make_engine(
@@ -347,13 +350,17 @@ def test_box_side_face_collision():
 
     # Vertical nozzle: holder_end=(7, 0, 48), 2.0 mm from side wall at x=5.
     result = engine.validate_pose(7.0, 0.0, 45.0, 0.0, 0.0, 1.0, current_z=50.0)
-    assert result == "part"
+    assert result.valid is False
+    assert result.status == CollisionStatus.PART_COLLISION
+    assert result.limiting_surface == "part"
 
     # Tilted nozzle toward the side wall: holder_end≈(4.3, 0, 46.3).
     result = engine.validate_pose(
         7.0, 0.0, 45.0, -0.9, 0.0, 0.436, current_z=50.0
     )
-    assert result == "part"
+    assert result.valid is False
+    assert result.status == CollisionStatus.PART_COLLISION
+    assert result.limiting_surface == "part"
 
 
 def test_side_face_not_bottom_face():
@@ -369,7 +376,9 @@ def test_side_face_not_bottom_face():
     current_z = 50.0
 
     result = engine.validate_pose(x, y, z, nx, ny, nz, current_z=current_z)
-    assert result == "part"
+    assert result.valid is False
+    assert result.status == CollisionStatus.PART_COLLISION
+    assert result.limiting_surface == "part"
 
     tip = np.array([x, y, z], dtype=float)
     normal = np.array([nx, ny, nz], dtype=float)
@@ -385,3 +394,17 @@ def test_side_face_not_bottom_face():
     assert closest_point[2] > 1.0, (
         f"closest point {closest_point} is on the bottom face"
     )
+
+
+if __name__ == "__main__":
+    test_reference_pose_accepted()
+    print("✓ test_reference_pose_accepted")
+    test_tilted_nozzle_holder_inside_wall()
+    print("✓ test_tilted_nozzle_holder_inside_wall")
+    test_box_side_face_collision()
+    print("✓ test_box_side_face_collision")
+    test_side_face_not_bottom_face()
+    print("✓ test_side_face_not_bottom_face")
+    test_random_poses_agree_with_independent_reference()
+    print("✓ test_random_poses_agree_with_independent_reference")
+    print("\nAll tests passed!")

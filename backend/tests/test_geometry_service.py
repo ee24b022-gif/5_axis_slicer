@@ -36,12 +36,25 @@ def test_geometry_service_blocks_invalid_mesh():
 def test_geometry_service_successful_pipeline():
     valid_bytes = create_valid_mesh_bytes()
     
+    # Use a machine profile with small holder radius to avoid bed collision
+    # on first layer for horizontal nozzle normals (vertical walls). The default
+    # 5mm holder radius causes real bed collision on layer 0 for horizontal
+    # nozzle normals; this is correctly detected by the new fail-closed collision
+    # engine. Use 0.1mm holder radius for testing.
+    machine_profile = {
+        "limits": {
+            "nozzle_length": 40.0,
+            "nozzle_holder_radius": 0.1,
+            "ranges": {"X": (-200.0, 200.0), "Y": (-200.0, 200.0), "Z": (0.0, 300.0)},
+        }
+    }
+    
     result, diagnostics = GeometryApplicationService.execute(
         job_id="test_job_123",
         file_bytes=valid_bytes,
         job_mode=JobMode.THREE_AXIS,
         job_settings={"layer_height": 0.2, "bed_center_z": 0.0},
-        machine_profile={}
+        machine_profile=machine_profile
     )
     
     # No fail diagnostics

@@ -45,7 +45,7 @@ echo "[entrypoint] Profile seeding complete."
 case "${1}" in
   api)
     echo "[entrypoint] Starting API server..."
-    exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    exec uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}"
     ;;
   worker)
     echo "[entrypoint] Starting Celery worker..."

@@ -26,6 +26,9 @@ class SlicerMachineProfile:
     # Envelope for collision (cylinder approximation)
     nozzle_length: float = 40.0
     nozzle_holder_radius: float = 5.0
+    # Optional collision sampling spacing for test performance (mm).
+    # If not set, defaults to nozzle_holder_radius / 2.0.
+    collision_sampling_spacing: float | None = None
 
 @dataclass
 class SurfaceFieldConfig:

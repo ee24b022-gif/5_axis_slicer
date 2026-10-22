@@ -316,7 +316,12 @@ export default function Home() {
   const [validationError, setValidationError] = useState<string | null>(null);
 
   // React Query Hooks
-  const { data: profiles, isLoading: isLoadingProfiles } = useMachineProfiles();
+  const {
+    data: profiles,
+    isLoading: isLoadingProfiles,
+    error: profilesError,
+    refetch: refetchProfiles,
+  } = useMachineProfiles();
   const uploadMesh = useUploadMesh();
   const submitJob = useSubmitJob();
 
@@ -548,6 +553,47 @@ export default function Home() {
           <div className="accent-text" style={{ marginBottom: '10px' }}>
             &gt; MACHINE CONFIGURATION
           </div>
+
+          {profilesError && !isLoadingProfiles && (
+            <div
+              style={{
+                color: '#ff4500',
+                marginBottom: '10px',
+                fontSize: '12px',
+                padding: '8px',
+                border: '1px solid #ff4500',
+                backgroundColor: 'rgba(255, 69, 0, 0.1)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+              }}
+            >
+              <div style={{ fontWeight: 'bold' }}>
+                ERROR: UNABLE TO LOAD MACHINE PROFILES
+              </div>
+              <div>
+                {String(
+                  (profilesError as Error)?.message || String(profilesError)
+                )}
+              </div>
+              <button
+                className="btn-secondary"
+                onClick={() => refetchProfiles()}
+                style={{
+                  width: 'auto',
+                  alignSelf: 'flex-start',
+                  padding: '4px 10px',
+                  fontSize: '11px',
+                }}
+              >
+                [ RETRY ]
+              </button>
+              <div style={{ fontSize: '11px', color: '#aaa' }}>
+                In production, ensure VITE_API_BASE_URL is set to the backend
+                URL in the frontend hosting environment.
+              </div>
+            </div>
+          )}
 
           <div className="controls-container" style={{ marginBottom: '20px' }}>
             <div className="input-row">

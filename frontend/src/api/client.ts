@@ -1,8 +1,12 @@
 import axios from 'axios';
 
-// The base URL can be defined through environment variables, typically handled by Vite using import.meta.env
-// For development it's often convenient to point to the local backend proxy.
-const baseURL = import.meta.env.VITE_API_BASE_URL || '/api';
+// Base URL for all API requests. VITE_API_BASE_URL is preferred; VITE_API_URL
+// is honored as a compatibility fallback. Neither defaults to a hardcoded
+// deployment URL - without either variable, requests are relative to the
+// serving origin (/api, proxied to the backend in dev via vite.config.ts).
+// Production: set VITE_API_BASE_URL in the frontend hosting environment to the
+// public backend URL, e.g. https://api.example.com
+const baseURL = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '/api';
 
 if (import.meta.env.DEV && !localStorage.getItem('access_token')) {
   localStorage.setItem('access_token', 'DEV_MOCK_ACCESS_TOKEN');

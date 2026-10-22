@@ -41,14 +41,14 @@ def _check_chunk_ge_1_collision(
     norms_world: np.ndarray,
     local_mesh: trimesh.Trimesh,
     mat: np.ndarray,
-    z: float,
+    printed_z: float,  # Z of already-printed material (strictly below current layer)
     profile: SlicerMachineProfile,
     cached_bvh: MeshBVH | None,
 ) -> np.ndarray:
     """Check collision for chunk index >= 1 against printed material.
 
     Printed material = all earlier chunks (cached BVH, world frame) UNION
-    the current chunk's already-printed part (clip by current layer, mapped
+    the current chunk's already-printed part (clip by printed_z, mapped
     to world frame). Returns a bool array of per-point collision flags.
     """
     holder_ends = pts_world + norms_world * profile.nozzle_length
@@ -73,11 +73,11 @@ def _check_chunk_ge_1_collision(
             )
         # Points outside bbox remain False (no collision with earlier chunks)
 
-    # Also check current chunk's already-printed part (clip below this layer).
+    # Also check current chunk's already-printed part (clip below printed_z).
     # Uses manifold3d trim_by_plane for a capped clip, mapped to world frame,
     # then checked via batch_check_poses_with_bvh.
     clip_result = collision_engine._clip_mesh_at_z(
-        local_mesh.vertices, local_mesh.faces, z
+        local_mesh.vertices, local_mesh.faces, printed_z
     )
     if clip_result is not None and not np.all(collisions):
         clip_v, clip_f = clip_result
@@ -353,9 +353,12 @@ class GeometryApplicationService:
         # --- Machine profile for collision ---
         limits = machine_profile.get("limits", {}) if isinstance(machine_profile, dict) else {}
         ranges = limits.get("ranges", {}) if isinstance(limits, dict) else {}
+        # Extract optional collision sampling spacing for test performance
+        collision_sampling_spacing = machine_profile.get("collision_sampling_spacing", None) if isinstance(machine_profile, dict) else None
         profile = SlicerMachineProfile(
             nozzle_length=float(limits.get("nozzle_length", 40.0)) if limits else 40.0,
             nozzle_holder_radius=float(limits.get("nozzle_holder_radius", 5.0)) if limits else 5.0,
+            collision_sampling_spacing=collision_sampling_spacing,
         )
         
         # Full-mesh BVH for collision; we filter by current_z (material below layer)
@@ -494,7 +497,9 @@ class GeometryApplicationService:
                     ordered = []
 
                 holder_radius = profile.nozzle_holder_radius
-                max_spacing = holder_radius / 2.0
+                # Allow configurable collision sampling spacing for test performance.
+                # Defaults to holder_radius / 2.0 for conservative sampling.
+                max_spacing = profile.collision_sampling_spacing or holder_radius / 2.0
 
                 # Build local-to-world 4x4 matrix from the chunk transform.
                 mat = np.array(matrix, dtype=float).reshape(4, 4)
@@ -545,10 +550,15 @@ class GeometryApplicationService:
                     )
 
                     # --- Collision check against printed material ---
+                    # Printed material = layers strictly below current layer (z - layer_height).
+                    # For the first layer (global_layer_idx == 0), there is no previous
+                    # material, so pass current_z=0 to get empty printed BVH.
+                    printed_z = z - layer_height if global_layer_idx > 0 else 0.0
+                    
                     if chunk_idx == 0:
                         # Horizontal plane: local == world for the base chunk.
                         collisions = collision_engine.batch_check_poses(
-                            pts_world, norms_world, current_z=z
+                            pts_world, norms_world, current_z=printed_z
                         )
                     else:
                         # Printed material = all earlier chunks (world frame, cached BVH)
@@ -563,7 +573,7 @@ class GeometryApplicationService:
                             norms_world,
                             local_mesh,
                             mat,
-                            z,
+                            printed_z,  # Use printed_z instead of z
                             profile,
                             cached_bvh,
                         )
@@ -659,10 +669,21 @@ class GeometryApplicationService:
                 provenance_enabled=True
             )
             kinematics = TableTableUVAdapter(bed_center_z=bed_center_z)
-            generator = RotaryGCodeGenerator(settings, kinematics, e_multiplier=0.05, travel_threshold=1.5)
+            generator = RotaryGCodeGenerator(
+                settings,
+                kinematics,
+                machine_profile=profile,
+                layer_height=layer_height,
+                line_width=0.4,
+                filament_diameter=1.75,
+                travel_threshold=1.5,
+            )
             
             path_points = [(px, py, pz, nx, ny, nz) for px, py, pz, nx, ny, nz, _, _, _ in all_path_points]
-            gcode_str, _ = generator.generate(path_points)
+            gen_result = generator.generate(path_points)
+            if not gen_result.is_valid:
+                return {"error": f"G-code generation failed validation: {'; '.join(gen_result.validation_errors)}"}, diagnostics, layers_data, chunks_data
+            gcode_str = gen_result.gcode
         else:
             gcode_str = ""
         

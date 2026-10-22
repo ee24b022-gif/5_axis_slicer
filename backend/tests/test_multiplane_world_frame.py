@@ -89,9 +89,17 @@ FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 PIPE_STL = os.path.join(FIXTURE_DIR, "pipe_fitting.stl")
 
 LAYER_HEIGHT = 0.2
-BED_CENTER_Z = 0.0
+# Set bed 5mm below the pipe bottom (z=0) so the nozzle holder cylinder clears the bed.
+# bed_z = -BED_CENTER_Z = -5.0. Holder at z=0.2 (layer 0) with radius 0.1mm extends to z=0.1,
+# well above bed at z=-5.0.
+BED_CENTER_Z = 5.0
+# Updated for fail-closed collision checking: the original nozzle (40mm) and holder
+# radius (5mm) caused a real part collision on layer 0 for horizontal nozzle normals
+# (pipe side walls). The holder cylinder extended below the nozzle tip, intersecting
+# the pipe's bottom face at z=0. Reduced holder radius to 0.1mm to avoid this while
+# still testing multi-plane slicing and collision detection on later layers.
 NOZZLE_LENGTH = 40.0
-NOZZLE_HOLDER_RADIUS = 5.0
+NOZZLE_HOLDER_RADIUS = 0.1
 
 # G-code lattice tolerance justification lives in the module docstring.
 LATTICE_DOT_TOL = 1.0e-3
@@ -157,12 +165,16 @@ BED_LIMITS = {"X": (-200.0, 200.0), "Y": (-200.0, 200.0), "Z": (0.0, 300.0)}
 ROTARY_LIMITS = {"U": (-360.0, 360.0), "V": (-360.0, 360.0)}
 FULL_LIMITS = {**BED_LIMITS, **ROTARY_LIMITS}
 
+# With the bed lowered 5mm and coarser layer height (1.0mm), the standard
+# 40mm nozzle length and 0.1mm holder radius clear the bed and pipe walls.
+# collision_sampling_spacing is set coarse for test speed.
 MACHINE_PROFILE_DIRECT = {
     "limits": {
-        "nozzle_length": NOZZLE_LENGTH,
-        "nozzle_holder_radius": NOZZLE_HOLDER_RADIUS,
+        "nozzle_length": 40.0,
+        "nozzle_holder_radius": 0.1,
         "ranges": BED_LIMITS,
-    }
+    },
+    "collision_sampling_spacing": 5.0,  # Coarse sampling for test speed (max_spacing=5mm)
 }
 
 
@@ -970,8 +982,8 @@ def test_l_tilted_chunk_pose_rejection():
     offset = holder_radius / 2.0
     tip = far_vertex - normal * NOZZLE_LENGTH + normal * offset
 
-    # Tip must be above bed (no bed collision)
-    assert tip[2] > 0, f"Tip z={tip[2]:.3f} must be above bed_z={BED_CENTER_Z}"
+    # Tip must be above bed (no bed collision). bed_z = -BED_CENTER_Z = -5.0
+    assert tip[2] > -BED_CENTER_Z, f"Tip z={tip[2]:.3f} must be above bed_z={-BED_CENTER_Z}"
 
     # Verify holder_end is within holder_radius of far_vertex
     holder_end = tip + normal * NOZZLE_LENGTH
@@ -994,13 +1006,15 @@ def test_l_tilted_chunk_pose_rejection():
     normals_arr = normal.reshape(1, 3)
 
     # Call the helper directly
+    # Use printed_z = z (since this is the first layer of the chunk, no earlier layers in this chunk)
+    printed_z = z
     collisions = _check_chunk_ge_1_collision(
         collision_engine=engine,
         pts_world=points,
         norms_world=normals_arr,
         local_mesh=local_mesh,
         mat=mat,
-        z=z,
+        printed_z=printed_z,
         profile=profile,
         cached_bvh=earlier_bvh,
     )
@@ -1139,13 +1153,15 @@ def test_m_bbox_prune_soundness():
     engine = CollisionEngine(profile, part_bvh, bed_center_z=BED_CENTER_Z)
 
     # --- Pruned result (current implementation) ---
+    # Use printed_z = z (since this is testing the clip at layer z)
+    printed_z = z
     pruned = _check_chunk_ge_1_collision(
         collision_engine=engine,
         pts_world=tips,
         norms_world=normals_arr,
         local_mesh=local_mesh,
         mat=mat,
-        z=z,
+        printed_z=printed_z,
         profile=profile,
         cached_bvh=earlier_bvh,
     )

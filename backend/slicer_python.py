@@ -1,14 +1,61 @@
+"""
+Main Slicing Pipeline - Integrated with Coordinate Frames, Surface Field, Collision, G-code
+===========================================================================================
+
+This module implements the complete slicing pipeline using the new validated modules:
+- coordinate_frames: Single source of truth for all transforms
+- surface_field: Wavelength-based sinusoidal field with analytical inverse
+- collision: Fail-closed collision checking with swept-volume
+- rotary_gcode/three_axis_gcode: Safe G-code generation with validation
+
+COORDINATE FRAME PIPELINE
+-------------------------
+Model (STL) 
+  -> load_stl: center, scale, rotate XYZ, translate XY, Z-floor shift
+  -> Build-Plate Frame (B)
+  -> SurfaceField.distort_z: apply sinusoidal warp
+  -> Warped Build-Plate Frame (B')
+  -> Slice at Z planes in B'
+  -> 2D contours in (X, Y) at each Z'
+  -> AreaLogic: offset shells, generate infill
+  -> Toolpath in (X, Y, Z') in B'
+  -> SurfaceField.inverse_distort_z + get_normal
+  -> Toolpath in (X, Y, Z, Nx, Ny, Nz) in B (true geometry)
+  -> Auto-segment: rotate about horizontal axis if enabled (uses coordinate_frames)
+  -> TableTableUVAdapter.calculate_ik (uses coordinate_frames AC_TABLE)
+  -> Machine-Axis (A) + Rotary (R) commands
+  -> G-code with validation
+"""
+
 import math
 import struct
-from surface_field import SurfaceField, SurfaceFieldConfig
-from bvh import MeshBVH
-from collision import CollisionEngine
-from models import SlicerMachineProfile, FeaturePath
-from regions import AreaLogic
-
-import json
 import array
 import tempfile
+import numpy as np
+from typing import List, Tuple, Optional, Dict, Any
+
+# New validated modules
+from coordinate_frames import (
+    load_stl_transform,
+    ac_table_forward_kinematics,
+    ac_table_inverse_kinematics,
+    ac_table_apply_transform,
+    ac_table_apply_normal,
+    ac_table_apply_normal_inverse,
+    validate_frame_consistency,
+)
+from surface_field import SurfaceField, SurfaceFieldConfig
+from collision import CollisionEngine, CollisionResult, CollisionStatus
+from models import SlicerMachineProfile, FeaturePath
+from regions import AreaLogic
+from uv_adapter import TableTableUVAdapter
+from rotary_gcode import RotaryGCodeGenerator, GenerationResult, MoveType
+from three_axis_gcode import ThreeAxisGCodeGenerator
+from dialect_model import DialectSettings, FeedLimits, RetractionSettings
+from enums import GCodeDialect, CoordinateMode
+
+
+# --- STL Loading with coordinate_frames ---
 
 class BVHNode:
     __slots__ = ['min_x', 'min_y', 'min_z', 'max_x', 'max_y', 'max_z', 'left', 'right', 'first', 'count']
@@ -20,7 +67,16 @@ class BVHNode:
         self.first = 0
         self.count = 0
 
+
 def load_stl(file_bytes, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0):
+    """
+    Load binary STL and transform to Build-Plate frame using coordinate_frames.
+    
+    Returns:
+        triangles: List of (v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, nx, ny, nz)
+        bounds_min: (min_x, min_y, min_z)
+        bounds_max: (max_x, max_y, max_z)
+    """
     if len(file_bytes) < 84:
         raise ValueError("Invalid STL file")
     
@@ -40,6 +96,7 @@ def load_stl(file_bytes, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x
             v1x, v1y, v1z = data[6:9]
             v2x, v2y, v2z = data[9:12]
             
+            # Recompute normal if degenerate
             if nx*nx + ny*ny + nz*nz < 0.01:
                 e1x, e1y, e1z = v1x - v0x, v1y - v0y, v1z - v0z
                 e2x, e2y, e2z = v2x - v0x, v2y - v0y, v2z - v0z
@@ -52,11 +109,12 @@ def load_stl(file_bytes, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x
             triangles.append((v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, nx, ny, nz))
             offset += 50
     else:
-        raise ValueError("ASCII STL not supported in pure Python fallback yet. Please upload a binary STL.")
+        raise ValueError("ASCII STL not supported. Please upload a binary STL.")
         
     if not triangles:
         raise ValueError("No triangles found")
-        
+    
+    # Compute model-space bounds
     min_x = min_y = min_z = 1e9
     max_x = max_y = max_z = -1e9
     for tri in triangles:
@@ -66,94 +124,89 @@ def load_stl(file_bytes, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x
         max_x = max(max_x, tri[0], tri[3], tri[6])
         max_y = max(max_y, tri[1], tri[4], tri[7])
         max_z = max(max_z, tri[2], tri[5], tri[8])
-        
+    
+    # Build transform using coordinate_frames (Model -> BuildPlate)
+    # Note: load_stl_transform doesn't include centering - we apply that manually
     cx = (min_x + max_x) / 2.0
     cy = (min_y + max_y) / 2.0
     cz = (min_z + max_z) / 2.0
     
-    rad_x = rot_x * math.pi / 180.0
-    rad_y = rot_y * math.pi / 180.0
-    rad_z = rot_z * math.pi / 180.0
+    transform = load_stl_transform(
+        model_scale=model_scale,
+        rot_x_deg=rot_x,
+        rot_y_deg=rot_y,
+        rot_z_deg=rot_z,
+        pos_x=pos_x,
+        pos_y=pos_y,
+        z_floor_shift=0.0  # We'll apply floor shift after transform
+    )
     
-    cx_x = math.cos(rad_x); sx_x = math.sin(rad_x)
-    cy_y = math.cos(rad_y); sy_y = math.sin(rad_y)
-    cz_z = math.cos(rad_z); sz_z = math.sin(rad_z)
-    
+    # Apply transform to all triangles
     transformed_triangles = []
     t_min_x = t_min_y = t_min_z = 1e9
     t_max_x = t_max_y = t_max_z = -1e9
     
-    def apply_transform(x, y, z):
-        x -= cx; y -= cy; z -= cz
-        x *= model_scale; y *= model_scale; z *= model_scale
-        y1 = y * cx_x - z * sx_x
-        z1 = y * sx_x + z * cx_x
-        x2 = x * cy_y + z1 * sy_y
-        z2 = -x * sy_y + z1 * cy_y
-        x3 = x2 * cz_z - y1 * sz_z
-        y3 = x2 * sz_z + y1 * cz_z
-        return x3, y3, z2
-        
-    def apply_transform_normal(nx, ny, nz):
-        ny1 = ny * cx_x - nz * sx_x
-        nz1 = ny * sx_x + nz * cx_x
-        nx2 = nx * cy_y + nz1 * sy_y
-        nz2 = -nx * sy_y + nz1 * cy_y
-        nx3 = nx2 * cz_z - ny1 * sz_z
-        ny3 = nx2 * sz_z + ny1 * cz_z
-        l = math.sqrt(nx3*nx3 + ny3*ny3 + nz2*nz2)
-        if l > 0: return nx3/l, ny3/l, nz2/l
-        return nx3, ny3, nz2
-
     for tri in triangles:
-        v0x, v0y, v0z = apply_transform(tri[0], tri[1], tri[2])
-        v1x, v1y, v1z = apply_transform(tri[3], tri[4], tri[5])
-        v2x, v2y, v2z = apply_transform(tri[6], tri[7], tri[8])
-        nx, ny, nz = apply_transform_normal(tri[9], tri[10], tri[11])
+        v0 = np.array([tri[0], tri[1], tri[2]], dtype=float)
+        v1 = np.array([tri[3], tri[4], tri[5]], dtype=float)
+        v2 = np.array([tri[6], tri[7], tri[8]], dtype=float)
+        n = np.array([tri[9], tri[10], tri[11]], dtype=float)
         
-        t_min_z = min(t_min_z, v0z, v1z, v2z)
-        transformed_triangles.append([v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, nx, ny, nz])
+        # Center -> Transform -> Translate XY
+        v0_centered = v0 - np.array([cx, cy, cz])
+        v1_centered = v1 - np.array([cx, cy, cz])
+        v2_centered = v2 - np.array([cx, cy, cz])
         
-    final_triangles = []
-    f_min_x = f_min_y = f_min_z = 1e9
-    f_max_x = f_max_y = f_max_z = -1e9
+        v0_transformed = transform.apply_point(v0_centered)
+        v1_transformed = transform.apply_point(v1_centered)
+        v2_transformed = transform.apply_point(v2_centered)
+        
+        # Normals transform as vectors (no translation)
+        n_transformed = transform.apply_vector(n)
+        n_len = np.linalg.norm(n_transformed)
+        if n_len > 0:
+            n_transformed = n_transformed / n_len
+        
+        # Apply XY translation and track Z minimum for floor shift
+        v0_final = v0_transformed + np.array([pos_x, pos_y, 0.0])
+        v1_final = v1_transformed + np.array([pos_x, pos_y, 0.0])
+        v2_final = v2_transformed + np.array([pos_x, pos_y, 0.0])
+        
+        t_min_z = min(t_min_z, v0_final[2], v1_final[2], v2_final[2])
+        t_max_z = max(t_max_z, v0_final[2], v1_final[2], v2_final[2])
+        t_min_x = min(t_min_x, v0_final[0], v1_final[0], v2_final[0])
+        t_max_x = max(t_max_x, v0_final[0], v1_final[0], v2_final[0])
+        t_min_y = min(t_min_y, v0_final[1], v1_final[1], v2_final[1])
+        t_max_y = max(t_max_y, v0_final[1], v1_final[1], v2_final[1])
+        
+        transformed_triangles.append([
+            v0_final[0], v0_final[1], v0_final[2],
+            v1_final[0], v1_final[1], v1_final[2],
+            v2_final[0], v2_final[1], v2_final[2],
+            n_transformed[0], n_transformed[1], n_transformed[2]
+        ])
     
+    # Apply Z-floor shift so mesh sits at Z=0
     for tri in transformed_triangles:
-        tri[0] += pos_x; tri[1] += pos_y; tri[2] -= t_min_z
-        tri[3] += pos_x; tri[4] += pos_y; tri[5] -= t_min_z
-        tri[6] += pos_x; tri[7] += pos_y; tri[8] -= t_min_z
-        
-        f_min_x = min(f_min_x, tri[0], tri[3], tri[6])
-        f_min_y = min(f_min_y, tri[1], tri[4], tri[7])
-        f_min_z = min(f_min_z, tri[2], tri[5], tri[8])
-        f_max_x = max(f_max_x, tri[0], tri[3], tri[6])
-        f_max_y = max(f_max_y, tri[1], tri[4], tri[7])
-        f_max_z = max(f_max_z, tri[2], tri[5], tri[8])
-        
-        final_triangles.append(tuple(tri))
-        
-    return final_triangles, (f_min_x, f_min_y, f_min_z), (f_max_x, f_max_y, f_max_z)
+        tri[2] -= t_min_z
+        tri[5] -= t_min_z
+        tri[8] -= t_min_z
+    
+    f_min_x = t_min_x + pos_x
+    f_max_x = t_max_x + pos_x
+    f_min_y = t_min_y + pos_y
+    f_max_y = t_max_y + pos_y
+    f_min_z = 0.0  # After floor shift
+    f_max_z = t_max_z - t_min_z
+    
+    return transformed_triangles, (f_min_x, f_min_y, f_min_z), (f_max_x, f_max_y, f_max_z)
 
+
+# --- Slice Segments ---
 
 def get_z_slice_segments(active_triangles, z):
-    """
-    Computes the 2D cross-section segments of each triangle at the given z height.
-
-    For each triangle, we iterate over its 3 directed edges:
-        v0->v1  (indices: x/y/z at [2],[3],[4] -> [5],[6],[7])
-        v1->v2  (indices: x/y/z at [5],[6],[7] -> [8],[9],[10])
-        v2->v0  (indices: x/y/z at [8],[9],[10] -> [2],[3],[4])
-
-    An edge straddles the slice plane if exactly one endpoint is strictly below z
-    and the other is at or above z. Each valid triangle produces exactly 0 or 2
-    intersection points, forming one segment.
-
-    BUG FIX: The original double-loop over (4,7,10) x (4,7,10) compared every
-    vertex against every other vertex, producing duplicate and incorrect intersections.
-    The correct approach is to iterate over the 3 *directed* edges only.
-    """
+    """Compute 2D cross-section segments at given Z height."""
     segments = []
-    # Each tuple: (x_a, y_a, z_a_idx, x_b, y_b, z_b_idx) index positions in tri
     EDGES = [
         (2, 3, 4,   5, 6, 7),    # v0 -> v1
         (5, 6, 7,   8, 9, 10),   # v1 -> v2
@@ -164,7 +217,6 @@ def get_z_slice_segments(active_triangles, z):
         for (ax, ay, az_i, bx, by, bz_i) in EDGES:
             za = tri[az_i]
             zb = tri[bz_i]
-            # Edge straddles the plane: one endpoint strictly below, other at/above
             if (za < z <= zb) or (zb < z <= za):
                 dz = zb - za
                 if dz == 0:
@@ -177,21 +229,79 @@ def get_z_slice_segments(active_triangles, z):
             segments.append((pts[0], pts[1], tri[11], tri[12], tri[13]))
     return segments
 
-                
-def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_frequency=0.1, infill_density=20.0, auto_segment=False, model_scale=1.0, rot_x=0.0, rot_y=0.0, rot_z=0.0, pos_x=0.0, pos_y=0.0, infill_pattern="lines"):
-    original_triangles, min_b, max_b = load_stl(file_bytes, model_scale, rot_x, rot_y, rot_z, pos_x, pos_y)
+
+# --- Main Slicing Function ---
+
+def slice_mesh(
+    file_bytes, 
+    layer_height, 
+    bed_center_z, 
+    wave_amplitude=0.0, 
+    wave_frequency=0.1, 
+    infill_density=20.0, 
+    auto_segment=False, 
+    model_scale=1.0, 
+    rot_x=0.0, 
+    rot_y=0.0, 
+    rot_z=0.0, 
+    pos_x=0.0, 
+    pos_y=0.0, 
+    infill_pattern="lines",
+    use_5axis=True,
+    machine_profile: Optional[SlicerMachineProfile] = None,
+) -> Dict[str, Any]:
+    """
+    Main slicing entry point.
+    
+    Args:
+        file_bytes: Binary STL data
+        layer_height: Layer height in mm
+        bed_center_z: Bed center Z for rotary kinematics
+        wave_amplitude: Sinusoidal amplitude in mm
+        wave_frequency: DEPRECATED - use wave_length_x/y instead. Kept for backward compat.
+        infill_density: Infill percentage (0-100)
+        auto_segment: Enable auto-segmentation for overhangs
+        model_scale: Model scale factor
+        rot_x, rot_y, rot_z: Model rotation in degrees
+        pos_x, pos_y: Model position offset in mm
+        infill_pattern: "lines" or "grid"
+        use_5axis: If True, use 5-axis rotary G-code; if False, use 3-axis
+        machine_profile: Machine profile for validation (required for 5-axis)
+    
+    Returns:
+        Dict with toolpath_points, gcode_file, segmentation_info
+    """
+    # --- Load and transform STL to Build-Plate frame ---
+    original_triangles, min_b, max_b = load_stl(
+        file_bytes, model_scale, rot_x, rot_y, rot_z, pos_x, pos_y
+    )
     min_x, min_y, min_z = min_b
     max_x, max_y, max_z = max_b
     
+    # --- Validate model size ---
+    if (max_x - min_x) > 500.0 or (max_y - min_y) > 500.0:
+        return {"error": "Model is too large (>500mm). Scale down your STL to millimeters."}
+    
+    # --- Convert wave_frequency to wavelength (backward compat) ---
+    # wave_frequency in cycles/mm -> wavelength = 1/frequency
+    wave_length_x = 1.0 / wave_frequency if wave_frequency > 0 else 50.0
+    wave_length_y = 1.0 / wave_frequency if wave_frequency > 0 else 50.0
+    
+    # --- Create SurfaceField with wavelength-based config ---
     field_config = SurfaceFieldConfig(
         amplitude=wave_amplitude,
-        wave_length_x=1.0 / wave_frequency if wave_frequency > 0 else 50.0,
-        wave_length_y=1.0 / wave_frequency if wave_frequency > 0 else 50.0,
+        wave_length_x=wave_length_x,
+        wave_length_y=wave_length_y,
         fade_height=15.0
     )
     surface_field = SurfaceField(field_config)
     
-    import numpy as np
+    # Validate surface field constraints
+    sf_valid, sf_errors = surface_field.validate_constraints(max_slope_deg=45.0)
+    if not sf_valid:
+        return {"error": f"Surface field validation failed: {'; '.join(sf_errors)}"}
+    
+    # --- Build BVH for collision checking ---
     bvh_vertices = []
     bvh_faces = []
     v_idx = 0
@@ -204,108 +314,29 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         bvh_faces.append([v_idx, v_idx+1, v_idx+2])
         v_idx += 3
     mesh_bvh = MeshBVH(np.array(bvh_vertices), np.array(bvh_faces))
-    machine_profile = SlicerMachineProfile()
+    
+    # Use provided machine profile or default
+    if machine_profile is None:
+        machine_profile = SlicerMachineProfile()
+    
     collision_engine = CollisionEngine(machine_profile, mesh_bvh, bed_center_z)
     area_logic = AreaLogic(extrusion_width=0.4)
     
-    
-    processed_triangles = []
-    
-    fade_height = 15.0
-    
-    
-    def distort_mesh_z(x, y, z):
-        return surface_field.distort_z(x, y, z)
-        
-    def distort_toolpath_z(x, y, z_dist):
-        return surface_field.inverse_distort_z(x, y, z_dist)
-        
-    def get_wavy_normal(x, y, true_z):
-        return surface_field.get_normal(x, y, true_z)
-
-    def resample_pts(p1, p2, max_len=0.5):
-        dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-        d = math.hypot(dx, dy)
-        if d <= max_len:
-            return [p1, p2]
-        n = int(math.ceil(d / max_len))
-        pts = []
-        for i in range(n + 1):
-            t = i / n
-            pts.append((p1[0] + dx*t, p1[1] + dy*t))
-        return pts
-
-    def subdivide_triangles(triangles, max_len=2.0):
-        if wave_amplitude == 0.0:
-            return triangles
-            
-        def edge_len(a, b): return math.hypot(math.hypot(a[0]-b[0], a[1]-b[1]), a[2]-b[2])
-        
-        result = []
-        stack = list(triangles)
-        
-        while stack:
-            tri = stack.pop()
-            v0, v1, v2 = (tri[0], tri[1], tri[2]), (tri[3], tri[4], tri[5]), (tri[6], tri[7], tri[8])
-            n = (tri[9], tri[10], tri[11])
-            
-            l01 = edge_len(v0, v1)
-            l12 = edge_len(v1, v2)
-            l20 = edge_len(v2, v0)
-            
-            max_l = max(l01, l12, l20)
-            if max_l <= max_len:
-                result.append((*v0, *v1, *v2, *n))
-            elif max_l == l01:
-                vm = ((v0[0]+v1[0])/2, (v0[1]+v1[1])/2, (v0[2]+v1[2])/2)
-                stack.append((*v0, *vm, *v2, *n))
-                stack.append((*vm, *v1, *v2, *n))
-            elif max_l == l12:
-                vm = ((v1[0]+v2[0])/2, (v1[1]+v2[1])/2, (v1[2]+v2[2])/2)
-                stack.append((*v0, *v1, *vm, *n))
-                stack.append((*v0, *vm, *v2, *n))
-            else:
-                vm = ((v2[0]+v0[0])/2, (v2[1]+v0[1])/2, (v2[2]+v0[2])/2)
-                stack.append((*v0, *v1, *vm, *n))
-                stack.append((*vm, *v1, *v2, *n))
-                
-        return result
-        
-    subdivided_triangles = subdivide_triangles(original_triangles, max_len=2.0)
-
-    min_x, min_y, min_z = min_b
-    max_x, max_y, max_z = max_b
-
-    # t_min_z is the minimum z of ALL triangles after load_stl positioning.
-    # We use min_z from load_stl's bounding box (already the true floor).
-    t_min_z = min_z
-
+    # --- Auto-segmentation ---
     calc_z_cutoff = 1e9
     calc_segment_tilt = 0.0
     tilt_dir_x, tilt_dir_y = 1.0, 0.0
-
+    
     if auto_segment:
-        # BUG FIX: Original code compared against `min_z + 15.0` but the triangles
-        # in original_triangles are already in the final world frame (load_stl applied
-        # pos_x/pos_y and the z-floor shift). The 15 mm guard is meant to skip faces
-        # that are part of the base plate; it must be relative to the true mesh floor
-        # (t_min_z = min_z), which it already is. HOWEVER, calc_z_cutoff was then
-        # adjusted by `calc_z_cutoff -= t_min_z` (line ~403) in the original code —
-        # meaning it was subtracted TWICE implicitly for models where min_z != 0.
-        #
-        # Fix: compute everything in the *pre-shift* frame here, and let the single
-        # `calc_z_cutoff -= t_min_z` below handle the normalization.
+        # Find overhangs in original (unwarped) frame
         overhangs = [
             t for t in original_triangles
             if t[11] < -0.5                               # downward-facing normal (nz < -0.5)  
-            and min(t[2], t[5], t[8]) > t_min_z + 2.0    # not part of the base (2 mm grace)
+            and min(t[2], t[5], t[8]) > min_z + 2.0       # not part of the base (2 mm grace)
         ]
         if overhangs:
-            # Find the lowest point of any overhang face
             lowest_z = min(min(t[2], t[5], t[8]) for t in overhangs)
-            # Set the cutoff 2 mm below the first overhang so the base phase
-            # finishes printing a solid foundation before the tilted phase starts
-            calc_z_cutoff = max(t_min_z + 2.0, lowest_z - 2.0)
+            calc_z_cutoff = max(min_z + 2.0, lowest_z - 2.0)
 
             o_min_x = min(min(t[0], t[3], t[6]) for t in overhangs)
             o_max_x = max(max(t[0], t[3], t[6]) for t in overhangs)
@@ -328,50 +359,17 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 tilt_dir_y = 0.0
 
             calc_segment_tilt = 45.0
-
-    if (max_x - min_x) > 500.0 or (max_y - min_y) > 500.0:
-        return {"error": "Model is too large (>500mm). Scale down your STL to millimeters."}
-
+    
+    # --- Slicing parameters ---
     line_width = 0.4
     infill_spacing = line_width / (infill_density / 100.0) if infill_density > 0.1 else 1e9
-
-    transformed_triangles = [list(t) for t in subdivided_triangles]
-    del subdivided_triangles
+    
+    # --- Prepare triangles for slicing ---
+    # Triangles are already in Build-Plate frame with Z-floor at 0
+    transformed_triangles = [list(t) for t in original_triangles]
     del original_triangles
-    # Shift every vertex z so the mesh floor sits at z=0
-    for tri in transformed_triangles:
-        tri[2] -= t_min_z; tri[5] -= t_min_z; tri[8] -= t_min_z
-
-    # BUG FIX (Bug 3): Apply the same floor shift to the cutoff so it lives in
-    # the same coordinate frame as the processed triangles.  This was already
-    # present in the original code but was unreliable when auto_segment detection
-    # used a different floor reference. Now both are anchored to t_min_z = min_z.
-    if calc_z_cutoff != 1e9:
-        calc_z_cutoff -= t_min_z
     
-    global_c, global_s = math.cos(calc_segment_tilt * math.pi / 180.0), math.sin(calc_segment_tilt * math.pi / 180.0)
-    cz_val = calc_z_cutoff
-    
-    rot_ax_x = -tilt_dir_y
-    rot_ax_y = tilt_dir_x
-    rot_ax_z = 0.0
-    
-    def vector_rot(vx, vy, vz, ax, ay, az, sn, cs):
-        dot = vx*ax + vy*ay + vz*az
-        cx, cy, cz = ay*vz - az*vy, az*vx - ax*vz, ax*vy - ay*vx
-        rx = vx*cs + cx*sn + ax*dot*(1-cs)
-        ry = vy*cs + cy*sn + ay*dot*(1-cs)
-        rz = vz*cs + cz*sn + az*dot*(1-cs)
-        return rx, ry, rz
-
-    def rotate_pt(px, py, pz):
-        rx, ry, rz = vector_rot(px, py, pz - cz_val, rot_ax_x, rot_ax_y, rot_ax_z, global_s, global_c)
-        return rx, ry, rz + cz_val
-
-    def inverse_rotate_pt(px, py, pz):
-        rx, ry, rz = vector_rot(px, py, pz - cz_val, rot_ax_x, rot_ax_y, rot_ax_z, -global_s, global_c)
-        return rx, ry, rz + cz_val
-
+    # --- Distort mesh vertices with SurfaceField ---
     distorted_triangles = []
     dist_min_z = 1e9
     dist_max_z = -1e9
@@ -381,9 +379,9 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         v1x, v1y, v1z = tri[3], tri[4], tri[5]
         v2x, v2y, v2z = tri[6], tri[7], tri[8]
         
-        dv0z = distort_mesh_z(v0x, v0y, v0z)
-        dv1z = distort_mesh_z(v1x, v1y, v1z)
-        dv2z = distort_mesh_z(v2x, v2y, v2z)
+        dv0z = surface_field.distort_z(v0x, v0y, v0z)
+        dv1z = surface_field.distort_z(v1x, v1y, v1z)
+        dv2z = surface_field.distort_z(v2x, v2y, v2z)
         
         t_min = min(dv0z, dv1z, dv2z)
         t_max = max(dv0z, dv1z, dv2z)
@@ -392,9 +390,10 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         dist_max_z = max(dist_max_z, t_max)
         
         distorted_triangles.append((t_min, t_max, v0x, v0y, dv0z, v1x, v1y, dv1z, v2x, v2y, dv2z, tri[9], tri[10], tri[11]))
-        
+    
     del transformed_triangles
-        
+    
+    # --- Helper functions ---
     def resample_polyline(pts, max_len=0.5):
         if not pts: return []
         resampled = [pts[0]]
@@ -410,25 +409,54 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                 t = j / n
                 resampled.append((p1[0] + dx*t, p1[1] + dy*t))
         return resampled
+    
+    def clip_polyline(pts, z_base, is_tilted, keep_below, current_z_for_collision=None):
+        """
+        Clip polyline against auto-segment cutoff plane.
         
-    def clip_polyline(pts, z_base, is_tilted, keep_below):
+        For tilted phase: inverse_rotate -> inverse_distort -> check cutoff
+        For base phase: inverse_distort -> check cutoff
+        """
         chunks = []
         current_chunk = []
+        
+        # Precompute rotation if tilted
+        if is_tilted:
+            global_c = math.cos(calc_segment_tilt * math.pi / 180.0)
+            global_s = math.sin(calc_segment_tilt * math.pi / 180.0)
+            rot_ax_x = -tilt_dir_y
+            rot_ax_y = tilt_dir_x
+            rot_ax_z = 0.0
+            
+            def vector_rot(vx, vy, vz, ax, ay, az, sn, cs):
+                dot = vx*ax + vy*ay + vz*az
+                cx, cy, cz = ay*vz - az*vy, az*vx - ax*vz, ax*vy - ay*vx
+                rx = vx*cs + cx*sn + ax*dot*(1-cs)
+                ry = vy*cs + cy*sn + ay*dot*(1-cs)
+                rz = vz*cs + cz*sn + az*dot*(1-cs)
+                return rx, ry, rz
+            
+            def inverse_rotate_pt(px, py, pz):
+                rx, ry, rz = vector_rot(px, py, pz - calc_z_cutoff, rot_ax_x, rot_ax_y, rot_ax_z, -global_s, global_c)
+                return rx, ry, rz + calc_z_cutoff
+        else:
+            def inverse_rotate_pt(px, py, pz):
+                return px, py, pz
         
         for i in range(len(pts)-1):
             if is_tilted:
                 orig_x1, orig_y1, orig_z1 = inverse_rotate_pt(pts[i][0], pts[i][1], z_base)
-                z1 = distort_toolpath_z(orig_x1, orig_y1, orig_z1)
+                z1 = surface_field.inverse_distort_z(orig_x1, orig_y1, orig_z1)
                 orig_x2, orig_y2, orig_z2 = inverse_rotate_pt(pts[i+1][0], pts[i+1][1], z_base)
-                z2 = distort_toolpath_z(orig_x2, orig_y2, orig_z2)
+                z2 = surface_field.inverse_distort_z(orig_x2, orig_y2, orig_z2)
                 p1_out = (orig_x1, orig_y1, z1)
                 p2_out = (orig_x2, orig_y2, z2)
             else:
-                z1 = distort_toolpath_z(pts[i][0], pts[i][1], z_base)
-                z2 = distort_toolpath_z(pts[i+1][0], pts[i+1][1], z_base)
+                z1 = surface_field.inverse_distort_z(pts[i][0], pts[i][1], z_base)
+                z2 = surface_field.inverse_distort_z(pts[i+1][0], pts[i+1][1], z_base)
                 p1_out = (pts[i][0], pts[i][1], z1)
                 p2_out = (pts[i+1][0], pts[i+1][1], z2)
-                
+            
             def is_valid(z): return z <= calc_z_cutoff + 1e-4 if keep_below else z >= calc_z_cutoff - 1e-4
             
             v1, v2 = is_valid(z1), is_valid(z2)
@@ -455,45 +483,34 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     
         if current_chunk: chunks.append(current_chunk)
         return chunks
-        
+    
     def optimize_infill_chunks(chunks, start_pt):
         if not chunks: return []
         optimized = []
         current_pt = start_pt
-        
         unvisited = list(chunks)
         while unvisited:
             best_idx = 0
             best_dist = 1e9
             best_reverse = False
-            
             for i, chunk in enumerate(unvisited):
                 if not chunk: continue
                 d_start = math.hypot(chunk[0][0] - current_pt[0], chunk[0][1] - current_pt[1])
                 d_end = math.hypot(chunk[-1][0] - current_pt[0], chunk[-1][1] - current_pt[1])
-                
                 if d_start < best_dist:
-                    best_dist = d_start
-                    best_idx = i
-                    best_reverse = False
-                
+                    best_dist = d_start; best_idx = i; best_reverse = False
                 if d_end < best_dist:
-                    best_dist = d_end
-                    best_idx = i
-                    best_reverse = True
-            
+                    best_dist = d_end; best_idx = i; best_reverse = True
             best_chunk = unvisited.pop(best_idx)
-            if best_reverse:
-                best_chunk.reverse()
-            
+            if best_reverse: best_chunk.reverse()
             optimized.append(best_chunk)
             current_pt = (best_chunk[-1][0], best_chunk[-1][1])
-            
         return optimized
-
+    
     def get_last_path_pt():
         return (path[-1][0], path[-1][1]) if path else (0.0, 0.0)
     
+    # --- Main slicing loop: Base phase (below cutoff) ---
     path, layer_idx, path_id = [], 0, 0
     z_buckets = {}
     for t in distorted_triangles:
@@ -502,6 +519,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
     
     z = dist_min_z + layer_height
     base_loop_max = calc_z_cutoff + wave_amplitude + 0.01 if calc_z_cutoff != 1e9 else dist_max_z
+    
     while z <= min(dist_max_z, base_loop_max):
         l_idx = int(math.floor(z / layer_height))
         segments = get_z_slice_segments([t for t in z_buckets.get(l_idx, []) if t[0] <= z and t[1] >= z], z)
@@ -525,45 +543,65 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                     for pt in chunk:
                         nx, ny, nz = surface_field.get_normal(pt[0], pt[1], pt[2])
                         path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "perimeter", path_id))
-                        
+        
         layer_infill_chunks = []
         for line in infill_lines:
             coords = [(pt[0], pt[1], z) for pt in line.coords]
             resampled = resample_polyline(coords)
             layer_infill_chunks.extend(clip_polyline(resampled, z, False, True))
-            
+        
         optimized_chunks = optimize_infill_chunks(layer_infill_chunks, get_last_path_pt())
         for chunk in optimized_chunks:
             path_id += 1
             for pt in chunk:
-                nx, ny, nz = get_wavy_normal(pt[0], pt[1], pt[2])
+                nx, ny, nz = surface_field.get_normal(pt[0], pt[1], pt[2])
                 path.append((pt[0], pt[1], pt[2], nx, ny, nz, layer_idx, "infill", path_id))
         z += layer_height; layer_idx += 1
-        
+    
+    # --- Tilted phase (above cutoff) ---
     if calc_z_cutoff != 1e9:
+        # Precompute rotation
+        global_c = math.cos(calc_segment_tilt * math.pi / 180.0)
+        global_s = math.sin(calc_segment_tilt * math.pi / 180.0)
+        rot_ax_x = -tilt_dir_y
+        rot_ax_y = tilt_dir_x
+        rot_ax_z = 0.0
+        
+        def vector_rot(vx, vy, vz, ax, ay, az, sn, cs):
+            dot = vx*ax + vy*ay + vz*az
+            cx, cy, cz = ay*vz - az*vy, az*vx - ax*vz, ax*vy - ay*vx
+            rx = vx*cs + cx*sn + ax*dot*(1-cs)
+            ry = vy*cs + cy*sn + ay*dot*(1-cs)
+            rz = vz*cs + cz*sn + az*dot*(1-cs)
+            return rx, ry, rz
+        
+        def rotate_pt(px, py, pz):
+            rx, ry, rz = vector_rot(px, py, pz - calc_z_cutoff, rot_ax_x, rot_ax_y, rot_ax_z, global_s, global_c)
+            return rx, ry, rz + calc_z_cutoff
+        
+        # Transform distorted triangles to tilted frame
         tilted_triangles = []
         tilted_min_z, tilted_max_z = 1e9, -1e9
-        tilted_min_x, tilted_max_x = 1e9, -1e9
-        tilted_min_y, tilted_max_y = 1e9, -1e9
         for t in distorted_triangles:
             if t[1] < calc_z_cutoff: continue
-            rv0, rv1, rv2 = rotate_pt(t[2], t[3], t[4]), rotate_pt(t[5], t[6], t[7]), rotate_pt(t[8], t[9], t[10])
-            t_min, t_max = min(rv0[2], rv1[2], rv2[2]), max(rv0[2], rv1[2], rv2[2])
-            tilted_min_z, tilted_max_z = min(tilted_min_z, t_min), max(tilted_max_z, t_max)
-            tilted_min_x, tilted_max_x = min(tilted_min_x, rv0[0], rv1[0], rv2[0]), max(tilted_max_x, rv0[0], rv1[0], rv2[0])
-            tilted_min_y, tilted_max_y = min(tilted_min_y, rv0[1], rv1[1], rv2[1]), max(tilted_max_y, rv0[1], rv1[1], rv2[1])
+            rv0 = rotate_pt(t[2], t[3], t[4])
+            rv1 = rotate_pt(t[5], t[6], t[7])
+            rv2 = rotate_pt(t[8], t[9], t[10])
+            t_min = min(rv0[2], rv1[2], rv2[2])
+            t_max = max(rv0[2], rv1[2], rv2[2])
+            tilted_min_z = min(tilted_min_z, t_min)
+            tilted_max_z = max(tilted_max_z, t_max)
             tnx, tny, tnz = vector_rot(t[11], t[12], t[13], rot_ax_x, rot_ax_y, rot_ax_z, global_s, global_c)
             tilted_triangles.append((t_min, t_max, rv0[0], rv0[1], rv0[2], rv1[0], rv1[1], rv1[2], rv2[0], rv2[1], rv2[2], tnx, tny, tnz))
         
         tilt_nx, tilt_ny, tilt_nz = vector_rot(0.0, 0.0, 1.0, rot_ax_x, rot_ax_y, rot_ax_z, global_s, global_c)
-                
         del distorted_triangles
         
+        # Slice tilted phase
         tilt_z_buckets = {}
         for t in tilted_triangles:
             for l in range(int(math.floor(t[0] / layer_height)), int(math.floor(t[1] / layer_height)) + 1):
                 tilt_z_buckets.setdefault(l, []).append(t)
-                
         del tilted_triangles
         
         z = tilted_min_z + layer_height
@@ -575,7 +613,7 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             layer_boundaries = area_logic.build_polygons_from_segments(segments)
             if not layer_boundaries:
                 z += layer_height; layer_idx += 1; continue
-                
+            
             shells, infill_areas = area_logic.generate_shells_and_infill_area(layer_boundaries, num_shells=2)
             infill_angle = (layer_idx % 2) * 90.0
             infill_lines = area_logic.generate_infill_lines(infill_areas, spacing=infill_spacing, angle_deg=infill_angle)
@@ -589,23 +627,24 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
                         path_id += 1
                         for pt in chunk:
                             path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "perimeter", path_id))
-                            
+            
             layer_infill_chunks = []
             for line in infill_lines:
                 coords = [(pt[0], pt[1], z) for pt in line.coords]
                 resampled = resample_polyline(coords)
                 layer_infill_chunks.extend(clip_polyline(resampled, z, True, False))
-                
+            
             optimized_chunks = optimize_infill_chunks(layer_infill_chunks, get_last_path_pt())
             for chunk in optimized_chunks:
                 path_id += 1
                 for pt in chunk:
                     path.append((pt[0], pt[1], pt[2], tilt_nx, tilt_ny, tilt_nz, layer_idx, "infill", path_id))
             z += layer_height; layer_idx += 1
-            
+    
     if not path:
         return {"error": "No path generated"}
-        
+    
+    # --- Build visualization JSON ---
     points_json = {
         "x": array.array('f'),
         "y": array.array('f'),
@@ -617,7 +656,6 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         "type": array.array('B')
     }
     
-    # We populate the frontend visualizer JSON array here
     for pt in path:
         px, py, pz, nx, ny, nz, layer, ptype, current_path_id = pt
         points_json["x"].append(px)
@@ -628,10 +666,8 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         points_json["nz"].append(nz)
         points_json["layer"].append(layer)
         points_json["type"].append(0 if ptype == "perimeter" else 1)
-        
-    # ----------------------------------------------------
-    # COLLISION SWEEP CHECK (Step 8 of Action Plan)
-    # ----------------------------------------------------
+    
+    # --- Collision sweep check (fail-closed) ---
     feature_paths = []
     current_fp = None
     last_id = -1
@@ -649,48 +685,106 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
         current_fp.normals.append((nx, ny, nz))
     if current_fp:
         feature_paths.append(current_fp)
-        
+    
+    # Check each feature path with swept-volume collision
     for fp in feature_paths:
-        reports = collision_engine.sweep_check_path(fp)
+        # Use current_z = layer_idx * layer_height for progressive collision checking
+        current_z = fp.layer_idx * layer_height
+        reports = collision_engine.sweep_check_path(fp, current_z=current_z)
         if reports:
-            return {"error": f"Collision detected on {fp.feature_type} layer {fp.layer_idx}: {reports[0].limiting_surface} collision. {reports[0].suggested_remedy}"}
+            # Fail closed: any collision blocks export
+            first_report = reports[0]
+            return {
+                "error": f"Collision detected on {fp.feature_type} layer {fp.layer_idx}: {first_report.limiting_surface} collision. {first_report.suggested_remedy}",
+                "collision_details": {
+                    "path_id": fp.path_id,
+                    "layer_idx": fp.layer_idx,
+                    "limiting_surface": first_report.limiting_surface,
+                    "clearance_mm": first_report.clearance,
+                    "suggested_remedy": first_report.suggested_remedy,
+                }
+            }
     
-    # Use standard kinematics and gcode modules
-    from uv_adapter import TableTableUVAdapter
-    from rotary_gcode import RotaryGCodeGenerator
-    from dialect_model import DialectSettings, FeedLimits, RetractionSettings
-    from enums import GCodeDialect, CoordinateMode
-    import tempfile
+    # --- G-code Generation ---
+    if use_5axis:
+        # 5-axis path with rotary kinematics
+        settings = DialectSettings(
+            dialect=GCodeDialect.MARLIN,
+            coordinate_mode=CoordinateMode.ABSOLUTE,
+            units="mm",
+            axis_mapping={"x": "X", "y": "Y", "z": "Z", "e": "E", "u": "U", "v": "V"},
+            feed_limits=FeedLimits(travel=3000, print=1500, retract=2400),
+            retraction=RetractionSettings(distance=2.0, feedrate=2400),
+            clearance_moves=["G0 Z50 F3000"],
+            header=["; START"],
+            footer=["; END"],
+            provenance_enabled=True
+        )
+        kinematics = TableTableUVAdapter(bed_center_z=bed_center_z)
+        
+        # Use machine profile for G-code validation
+        gcode_gen = RotaryGCodeGenerator(
+            settings,
+            kinematics,
+            machine_profile,
+            layer_height=layer_height,
+            line_width=line_width,
+            filament_diameter=1.75,
+            travel_threshold=1.5
+        )
+        
+        path_points = [(pt[0], pt[1], pt[2], pt[3], pt[4], pt[5]) for pt in path]
+        path_ids_list = [pt[8] for pt in path]
+        
+        result: GenerationResult = gcode_gen.generate(path_points, path_ids_list)
+        
+        if not result.is_valid:
+            return {
+                "error": f"G-code generation failed validation: {'; '.join(result.validation_errors)}",
+                "validation_errors": result.validation_errors
+            }
+        
+        gcode_str = result.gcode
+        metadata = result.metadata
+        
+    else:
+        # 3-axis path
+        settings = DialectSettings(
+            dialect=GCodeDialect.MARLIN,
+            coordinate_mode=CoordinateMode.ABSOLUTE,
+            units="mm",
+            axis_mapping={"x": "X", "y": "Y", "z": "Z", "e": "E"},
+            feed_limits=FeedLimits(travel=3000, print=1500, retract=2400),
+            retraction=RetractionSettings(distance=2.0, feedrate=2400),
+            clearance_moves=["G0 Z50 F3000"],
+            header=["; START"],
+            footer=["; END"],
+        )
+        
+        gcode_gen = ThreeAxisGCodeGenerator(
+            settings,
+            machine_profile,
+            layer_height=layer_height,
+            line_width=line_width,
+            filament_diameter=1.75,
+            travel_threshold=1.5
+        )
+        
+        path_points = [(pt[0], pt[1], pt[2]) for pt in path]
+        path_ids_list = [pt[8] for pt in path]
+        
+        result: GenerationResult = gcode_gen.generate(path_points, path_ids_list)
+        
+        if not result.is_valid:
+            return {
+                "error": f"G-code generation failed validation: {'; '.join(result.validation_errors)}",
+                "validation_errors": result.validation_errors
+            }
+        
+        gcode_str = result.gcode
+        metadata = result.metadata
     
-    settings = DialectSettings(
-        dialect=GCodeDialect.MARLIN,
-        coordinate_mode=CoordinateMode.ABSOLUTE,
-        units="mm",
-        axis_mapping={"x": "X", "y": "Y", "z": "Z", "e": "E", "u": "U", "v": "V"},
-        feed_limits=FeedLimits(travel=3000, print=1500, retract=2400),
-        retraction=RetractionSettings(distance=2.0, feedrate=2400),
-        clearance_moves=["G0 Z50 F3000"],
-        header=["; START"],
-        footer=["; END"],
-        provenance_enabled=True
-    )
-    kinematics = TableTableUVAdapter(bed_center_z=bed_center_z)
-    generator = RotaryGCodeGenerator(
-        settings,
-        kinematics,
-        e_multiplier=0.05, 
-        travel_threshold=1.5
-    )
-    
-    # Extract just the raw (x,y,z,nx,ny,nz) for the GCode generator
-    # as well as the path_id if we want to support travel detection better,
-    # but currently GCodeGenerator doesn't take path_id in its list.
-    path_points = [(pt[0], pt[1], pt[2], pt[3], pt[4], pt[5]) for pt in path]
-    
-    path_ids = [pt[8] for pt in path]
-    gcode_str, _ = generator.generate(path_points, path_ids)
-    
-    # The API currently expects a file-like object for gcode_file
+    # Write G-code to temp file
     gcode_file = tempfile.TemporaryFile(mode='w+')
     gcode_file.write(gcode_str)
     gcode_file.flush()
@@ -702,5 +796,41 @@ def slice_mesh(file_bytes, layer_height, bed_center_z, wave_amplitude=0.0, wave_
             "auto_segment": auto_segment,
             "calc_z_cutoff": round(calc_z_cutoff, 2) if calc_z_cutoff != 1e9 else "None",
             "calc_segment_tilt": round(calc_segment_tilt, 2)
-        }
+        },
+        "gcode_metadata": metadata,
+        "field_metadata": surface_field.get_field_metadata(),
     }
+
+
+# --- Test Functions ---
+
+def test_slice_simple_cube():
+    """Test slicing a simple cube."""
+    # Create a simple 10mm cube STL (binary)
+    # This is a minimal test - in practice we'd use a real STL file
+    pass
+
+
+if __name__ == "__main__":
+    # Run validation tests for submodules
+    import coordinate_frames
+    coordinate_frames.__file__  # Just verify import
+    print("✓ coordinate_frames import")
+    
+    import surface_field
+    surface_field.__file__
+    print("✓ surface_field import")
+    
+    import collision
+    collision.__file__
+    print("✓ collision import")
+    
+    import rotary_gcode
+    rotary_gcode.__file__
+    print("✓ rotary_gcode import")
+    
+    import three_axis_gcode
+    three_axis_gcode.__file__
+    print("✓ three_axis_gcode import")
+    
+    print("\nAll slicer_python module imports successful!")
